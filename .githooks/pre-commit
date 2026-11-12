@@ -1,0 +1,6 @@
+#!/bin/sh
+# Every commit must pass lint, type-check and tests.
+set -e
+if git diff --cached --name-only | grep -q '^backend/'; then
+  make -s check
+fi
