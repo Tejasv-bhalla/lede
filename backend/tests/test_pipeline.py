@@ -530,3 +530,51 @@ async def test_a_fact_check_that_verifies_nothing_is_retried_then_holds_the_draf
     assert len(checker.checked) == 2
     assert outcome.state is RunState.DRAFT_HELD
     assert any("could not match" in p for p in outcome.problems)
+
+
+class WriterBusyForRevisions(FakeWriter):
+    async def revise(self, draft, problems, request):
+        raise LLMUnavailable("All providers failed for role 'writer': rate limited")
+
+
+class CheckerBusy(FakeFactChecker):
+    async def check(self, draft, request):
+        raise LLMUnavailable("All providers failed for role 'checker': rate limited")
+
+
+async def test_a_draft_is_kept_and_held_when_models_are_too_busy_to_fix_it():
+    d = replace(
+        deps(drafts=(DRAFT_WITH_INVENTED_METRIC,), unsupported_sentences=(INVENTED,)),
+        writer=WriterBusyForRevisions([DRAFT_WITH_INVENTED_METRIC]),
+    )
+    outcome = await run(d)
+
+    assert outcome.state is RunState.DRAFT_HELD
+    assert outcome.draft == DRAFT_WITH_INVENTED_METRIC
+    assert any(INVENTED in p for p in outcome.problems)
+    assert "models_busy" in outcome.notes
+
+
+async def test_a_draft_is_kept_and_held_when_models_are_too_busy_to_fact_check_it():
+    d = replace(deps(scores={PODCAST_QUOTE.claim: 4.5}), fact_checker=CheckerBusy())
+    outcome = await run(d)
+
+    assert outcome.state is RunState.DRAFT_HELD
+    assert outcome.draft == GOOD_DRAFT
+    assert any("not fact-checked" in p for p in outcome.problems)
+
+
+class WriterWithOneVariantBusy(FakeWriter):
+    async def draft(self, request):
+        if request.variant == 1:
+            raise LLMUnavailable("All providers failed for role 'writer': rate limited")
+        return await super().draft(request)
+
+
+async def test_when_one_draft_variant_cannot_be_written_the_other_is_used():
+    d = replace(
+        deps(scores={PODCAST_QUOTE.claim: 4.5}), writer=WriterWithOneVariantBusy([GOOD_DRAFT])
+    )
+    outcome = await run(d)
+    assert outcome.state is RunState.DRAFT_READY
+    assert outcome.draft == GOOD_DRAFT

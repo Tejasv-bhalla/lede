@@ -200,10 +200,15 @@ def _rules_for(
 
 
 async def _best_draft(writer: Writer, request: DraftRequest) -> Draft:
-    """S6: draft DRAFT_VARIANTS variants; keep the one with the fewest rule violations."""
-    drafts = await asyncio.gather(
-        *(writer.draft(replace(request, variant=i)) for i in range(DRAFT_VARIANTS))
+    """S6: draft DRAFT_VARIANTS variants; keep the one with the fewest rule violations. A variant
+    that fails (busy models) is skipped as long as one succeeds."""
+    results = await asyncio.gather(
+        *(writer.draft(replace(request, variant=i)) for i in range(DRAFT_VARIANTS)),
+        return_exceptions=True,
     )
+    drafts = [r for r in results if isinstance(r, Draft)]
+    if not drafts:  # every variant failed: surface the first reason
+        raise next(r for r in results if isinstance(r, BaseException))
     return min(drafts, key=lambda d: len(check_draft(d.body, request.rules)))
 
 
@@ -222,30 +227,50 @@ UNCHECKED = (
 )
 
 
+NOT_CHECKED = (
+    "This draft was not fact-checked because the free AI models were busy. Check each claim "
+    "against the sources before approving."
+)
+
+
 def _grounded(verdicts: list[ClaimVerdict]) -> bool:
     return any(v.evidence_id and v.verdict is Entailment.SUPPORTED for v in verdicts)
 
 
-async def _fact_check(
-    draft: Draft, request: DraftRequest, deps: PipelineDeps
-) -> tuple[Draft, list[str], list[ClaimVerdict]]:
+@dataclass(slots=True)
+class _Checked:
+    draft: Draft
+    problems: list[str]
+    verdicts: list[ClaimVerdict]
+    busy: bool = False  # models were too busy to finish checking or fixing
+
+
+async def _fact_check(draft: Draft, request: DraftRequest, deps: PipelineDeps) -> _Checked:
     """S7: check claim by claim; send problems back for a minimal fix, at most MAX_REVISIONS.
 
-    Returns the final draft, whatever problems remain, and the last claim-by-claim verdicts.
+    A draft is never thrown away because models are busy: if checking or fixing can't run, the
+    draft is returned with its known problems (or a "not fact-checked" warning) for the rep.
     """
     for attempt in range(MAX_REVISIONS + 1):
-        verdicts = await deps.fact_checker.check(draft, request)
-        problems = _problems(draft, verdicts, request.rules)
-        if not problems and not _grounded(verdicts):
-            # A check that tied nothing to evidence is not a pass: ask once more, then say so.
+        try:
             verdicts = await deps.fact_checker.check(draft, request)
             problems = _problems(draft, verdicts, request.rules)
             if not problems and not _grounded(verdicts):
-                problems = [UNCHECKED]
-            return draft, problems, verdicts
+                # A check that tied nothing to evidence is not a pass: ask once more, then say so.
+                verdicts = await deps.fact_checker.check(draft, request)
+                problems = _problems(draft, verdicts, request.rules)
+                if not problems and not _grounded(verdicts):
+                    problems = [UNCHECKED]
+                return _Checked(draft, problems, verdicts)
+        except LLMUnavailable:
+            rules = [f"Rule {v.kind}: {v.detail}" for v in check_draft(draft.body, request.rules)]
+            return _Checked(draft, [NOT_CHECKED, *rules], [], busy=True)
         if not problems or attempt == MAX_REVISIONS:
-            return draft, problems, verdicts
-        draft = await deps.writer.revise(draft, problems, request)
+            return _Checked(draft, problems, verdicts)
+        try:
+            draft = await deps.writer.revise(draft, problems, request)
+        except LLMUnavailable:
+            return _Checked(draft, problems, verdicts, busy=True)
     raise AssertionError("unreachable")
 
 
@@ -417,7 +442,14 @@ async def _stages(
     events.done(f"Kept the better of {DRAFT_VARIANTS} drafts ({len(draft.body.split())} words)")
 
     events.started("fact_check")
-    outcome.draft, outcome.problems, outcome.claims = await _fact_check(draft, request, deps)
+    checked = await _fact_check(draft, request, deps)
+    outcome.draft, outcome.problems, outcome.claims = (
+        checked.draft,
+        checked.problems,
+        checked.verdicts,
+    )
+    if checked.busy:
+        outcome.notes.append("models_busy")
     events.done(
         f"{_count(len(outcome.problems), 'problem')} left to fix"
         if outcome.problems

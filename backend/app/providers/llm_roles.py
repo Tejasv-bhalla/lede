@@ -31,11 +31,13 @@ ROLE_CHAINS: dict[Role, list[tuple[str, str]]] = {
         ("groq", "openai/gpt-oss-20b"),
         ("mistral", "mistral-medium-latest"),
     ],
-    "writer": [
+    "writer": [  # last resorts keep a run alive; the fact-check still guards every claim
         ("gemini", "gemini-3.8-flash"),
         ("groq", "openai/gpt-oss-120b"),
         ("groq", "qwen/qwen3.8-27b"),
         ("mistral", "mistral-medium-latest"),
+        ("gemini", "gemini-3.5-flash-lite"),
+        ("groq", "openai/gpt-oss-20b"),
     ],
     "reader": [  # the busiest role (one call per page): spread across separate allowances
         ("gemini", "gemini-3.5-flash-lite"),
