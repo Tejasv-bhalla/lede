@@ -182,7 +182,8 @@ Every run ends in an honest state: a draft worth sending, or a clear reason ther
   campaign with everything in it.
 - Models page: choose your own provider and model per job, with a Test button; the free models stay
   behind as backup.
-- Light and dark themes; an access code protects the whole app.
+- Light and dark themes; an access code protects the whole app (optionally shown on the login page
+  for a public demo).
 
 ---
 
@@ -362,6 +363,7 @@ All settings come from environment variables or the project-root `.env` (git-ign
 | `JINA_API_KEY` | Optional | Higher limits for the page-rendering fallback. |
 | `HUNTER_API_KEY` | Optional | Email finder; shown on the dashboard when set. |
 | `TAVILY_MONTHLY_CREDITS`, `EXA_MONTHLY_USD`, `HUNTER_MONTHLY_CREDITS` | Optional | Monthly limits (defaults 1000, 10 and 50). |
+| `SHOW_ACCESS_CODE` | Public demos only | `true` shows the access code under the login box, for reviewers who open the link without the README. Leave unset to keep the app private. |
 | `CLAUDE_CODE_LOCAL` | Local demos only | `true` offers "Claude Code on this computer" as a model. Never on a server. |
 | `GITHUB_TOKEN`, `SEC_CONTACT_EMAIL` | No | Reserved for planned connectors; not used yet. |
 
@@ -379,7 +381,9 @@ any Postgres; Neon's free tier is the tested choice.
    connection string.
 2. **Server.** In Render: **New → Blueprint**, connect GitHub, pick this repo and fill in the
    secrets it asks for: `DATABASE_URL`, `DEMO_ACCESS_CODE` and the API keys. `SETTINGS_SECRET` is
-   generated for you. Tables are created on first start.
+   generated for you, and `SHOW_ACCESS_CODE` is on (remove it to keep the code private). Tables are
+   created on first start. Creating the service by hand instead? Add the same variables, and set
+   `SETTINGS_SECRET` to the output of `openssl rand -hex 32`.
 3. **Keep it awake.** Render's free plan sleeps after 15 idle minutes. An uptime monitor (for
    example UptimeRobot) calling `https://<your-app>/api/health` every 10 minutes keeps it awake.
    That endpoint never touches the database, so Neon can still pause when idle.
@@ -394,13 +398,14 @@ Tested before release: the image runs as a non-root user, holds no `.env` or loc
 
 ## API
 
-All routes are under `/api`. Everything except `/health` and `/auth/check` needs the
+All routes are under `/api`. Everything except `/health`, `/auth/check` and `/auth/hint` needs the
 `X-Access-Code` header. Interactive docs are at `/docs` on a running server.
 
 | Method and path | Purpose |
 |---|---|
 | `GET /health` | Liveness for the uptime monitor; says whether runs are enabled. |
 | `POST /auth/check` | Checks an access code. |
+| `GET /auth/hint` | The access code, only when `SHOW_ACCESS_CODE` is on (for the login page); otherwise `null`. |
 | `GET`, `PUT /profile` | Read or save the seller profile. |
 | `GET`, `POST /campaigns` | List campaigns (with progress counts) or create one. |
 | `GET`, `PUT`, `DELETE /campaigns/{id}` | Read or update a campaign, or delete it with its prospects and runs (refused while a run is going). |
@@ -422,9 +427,9 @@ All routes are under `/api`. Everything except `/health` and `/auth/check` needs
 
 - **Test-driven at agreed seams** ([backend/tests/README.md](backend/tests/README.md)): the rules
   engine, profile and campaign merge, hook ranking, research-loop control, pipeline outcomes, the
-  model router, search fusion, page extraction, the email finder and the HTTP API. Only outer
+  model router, search fusion, page extraction, the email finder, model settings and the HTTP API. Only outer
   boundaries (search, models, HTTP) are faked; our own modules never are.
-- **210 backend tests**, plus type checking (mypy), linting and formatting (ruff). The web app is
+- **212 backend tests**, plus type checking (mypy), linting and formatting (ruff). The web app is
   type-checked (tsc), linted (oxlint), format-checked (Prettier) and built.
 - **A pre-commit hook** runs the checks for the parts a commit touches, so every commit on `main`
   is green.
@@ -443,7 +448,8 @@ make test           # backend tests only
 - **Secrets** live only in `.env` (git-ignored) or the host's environment. The Docker image contains
   none.
 - **Saved model keys** are encrypted at rest and never returned by the API.
-- **The access code** is compared in constant time; the API refuses requests without it.
+- **The access code** is compared in constant time; the API refuses requests without it. The login
+  page reveals it only when `SHOW_ACCESS_CODE` is on.
 - **Prompt injection**: web pages are read by models that can only return structured facts. Nothing
   a page says can trigger an action, and every fact must match a quote that code finds on the page.
 - **Claude Code** is opt-in, local only, and runs with every tool disabled in an empty folder.

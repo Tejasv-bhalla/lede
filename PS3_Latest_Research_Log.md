@@ -1,5 +1,9 @@
 # PS-3 — Living Research & Decision Log
 
+> **Historical record.** This log captures the research and early decisions made before the build
+> (11–12 Nov 2026) and is kept as written. For the design see [SYSTEM_DESIGN.md](SYSTEM_DESIGN.md)
+> (§17 lists what was actually built); for using and running the system see [README.md](README.md).
+
 **Case study:** AI Solutions Analyst (Zamp) — PS-3: Personalized Outreach, Prospect → Draft  
 **Created/last updated:** 12 November 2026  
 **State:** Pre-build research + initial technical feasibility spike (not a completed system)  
