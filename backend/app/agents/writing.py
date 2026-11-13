@@ -9,7 +9,7 @@ from app.pipeline.hooks import RankedHook
 from app.pipeline.ports import Draft, DraftRequest
 from app.providers.llm_router import LLMRouter
 
-PROMPT_VERSION = "writer-v2"
+PROMPT_VERSION = "writer-v3"
 
 RECENT_OK = "You may say it is recent."
 NOT_RECENT = (
@@ -52,7 +52,8 @@ OTHER VERIFIED FACTS (optional, cite if used):
 {chr(10).join(_evidence(h) for h in r.alternates) or "(none)"}
 
 RULES:
-- You are writing TO the recipient. Start with their first name and a comma{greeting}. Refer
+- You are writing TO the recipient. Put their first name and a comma on the first line by
+  itself{greeting}, then a blank line, then the email in normal sentence case. Refer
   to their company as "you", "your team" or by name, never as a third party they might not
   know about (not "{c.company_name} announced...", but "your team announced...").
 - At most {r.rules.max_words} words, 3-4 short sentences, plain and warm. No buzzwords.
