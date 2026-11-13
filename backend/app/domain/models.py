@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from enum import StrEnum
+from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -204,7 +205,7 @@ class Segment(_Model):
 
 
 class Campaign(_Model):
-    id: str
+    id: str = Field(default_factory=lambda: uuid4().hex[:12])
     name: str
     objective: str
     persona_id: str

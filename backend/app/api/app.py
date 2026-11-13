@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import hmac
+from dataclasses import asdict
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel
 
 from app.config import Settings
+from app.context.merge import merge_brief
 from app.db.store import Store
-from app.domain.models import SellerProfile
+from app.domain.models import Campaign, SellerProfile
 
 
 class CodeCheck(BaseModel):
@@ -57,6 +59,58 @@ async def get_profile(store: StoreDep) -> dict[str, Any]:
 async def put_profile(profile: SellerProfile, store: StoreDep) -> dict[str, Any]:
     version = await store.put_profile(profile.model_dump(mode="json"))
     return {"version": version, "profile": profile.model_dump(mode="json")}
+
+
+@api.get("/campaigns")
+async def list_campaigns(store: StoreDep) -> list[dict[str, Any]]:
+    return await store.list_campaigns()
+
+
+@api.post("/campaigns", status_code=201)
+async def create_campaign(campaign: Campaign, store: StoreDep) -> dict[str, Any]:
+    data = campaign.model_dump(mode="json")
+    await store.add_campaign(data)
+    return data
+
+
+async def _campaign(store: Store, campaign_id: str) -> Campaign:
+    data = await store.get_campaign(campaign_id)
+    if data is None:
+        raise HTTPException(404, f"No campaign '{campaign_id}'.")
+    return Campaign.model_validate(data)
+
+
+@api.get("/campaigns/{campaign_id}")
+async def get_campaign(campaign_id: str, store: StoreDep) -> dict[str, Any]:
+    return (await _campaign(store, campaign_id)).model_dump(mode="json")
+
+
+@api.put("/campaigns/{campaign_id}")
+async def put_campaign(campaign_id: str, campaign: Campaign, store: StoreDep) -> dict[str, Any]:
+    data = campaign.model_copy(update={"id": campaign_id}).model_dump(mode="json")
+    if not await store.put_campaign(data):
+        raise HTTPException(404, f"No campaign '{campaign_id}'.")
+    return data
+
+
+async def _profile(store: Store) -> SellerProfile:
+    data = await store.get_profile()
+    if data is None:
+        raise HTTPException(
+            409, "Set up the seller profile first; campaigns are checked against it."
+        )
+    return SellerProfile.model_validate(data)
+
+
+@api.post("/campaigns/{campaign_id}/validate")
+async def validate_campaign(campaign_id: str, store: StoreDep) -> dict[str, Any]:
+    campaign = await _campaign(store, campaign_id)
+    brief = merge_brief(await _profile(store), campaign)
+    return {
+        "ok": brief.ok,
+        "issues": [asdict(i) for i in brief.issues],
+        "provenance": brief.provenance,
+    }
 
 
 def create_app(settings: Settings, *, store: Store) -> FastAPI:

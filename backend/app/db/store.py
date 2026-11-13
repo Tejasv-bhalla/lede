@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import JSON, DateTime, Integer, select
+from sqlalchemy import JSON, DateTime, Integer, String, select
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -45,6 +45,13 @@ class ProfileRow(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
+class CampaignRow(Base):
+    __tablename__ = "campaigns"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    data: Mapped[dict[str, Any]] = mapped_column(Json)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class Store:
     def __init__(self, url: str) -> None:
         self._engine = create_async_engine(async_url(url))
@@ -76,3 +83,28 @@ class Store:
                 return 1
             row.data, row.version, row.updated_at = data, row.version + 1, _now()
             return row.version
+
+    # ── campaigns ─────────────────────────────────────────────────────────────
+
+    async def add_campaign(self, data: dict[str, Any]) -> None:
+        async with self.session() as s, s.begin():
+            s.add(CampaignRow(id=data["id"], data=data))
+
+    async def list_campaigns(self) -> list[dict[str, Any]]:
+        async with self.session() as s:
+            rows = await s.scalars(select(CampaignRow).order_by(CampaignRow.created_at))
+            return [r.data for r in rows]
+
+    async def get_campaign(self, campaign_id: str) -> dict[str, Any] | None:
+        async with self.session() as s:
+            row = await s.get(CampaignRow, campaign_id)
+            return row.data if row else None
+
+    async def put_campaign(self, data: dict[str, Any]) -> bool:
+        """Replace an existing campaign; False if there is none with that id."""
+        async with self.session() as s, s.begin():
+            row = await s.get(CampaignRow, data["id"])
+            if row is None:
+                return False
+            row.data = data
+            return True
