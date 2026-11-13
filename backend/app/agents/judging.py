@@ -20,7 +20,7 @@ from app.pipeline.hooks import DimensionScores
 from app.pipeline.ports import ClaimVerdict, Draft, DraftRequest
 from app.providers.llm_router import LLMRouter
 
-PROMPT_VERSION = "judging-v3"
+PROMPT_VERSION = "judging-v4"
 
 
 BATCH = 12  # items per call: one call covers a Standard shortlist; instructions sent once
@@ -142,7 +142,9 @@ class LLMFactChecker:
     async def check(self, draft: Draft, request: DraftRequest) -> list[ClaimVerdict]:
         evidence = [request.hook.evidence, *(h.evidence for h in request.alternates)]
         sources = "\n".join(
-            f'[{e.id}] {e.claim}\n     quote: "{e.verbatim_quote}"' for e in evidence
+            f'[{e.id}] {e.claim}\n     quote: "{e.verbatim_quote}"\n'
+            f"     dated: {e.event_date or e.published_at or 'undated'}"
+            for e in evidence
         )
         approved = "\n".join(f"- {c.text}" for c in request.brief.claims) or "(none)"
         prompt = f"""Fact-check a sales email sentence by sentence. You did not write it.
@@ -161,7 +163,8 @@ Split the email into atomic claims. For each:
 - kind "prospect_fact": states something about the prospect or their company. Give the
   evidence_id that supports it; "supported" only if that evidence quote says it, including any
   numbers, dates and names exactly; "partial" if it stretches or adds; "unsupported" if no
-  evidence says it.
+  evidence says it. Today is {request.today.isoformat()}: a time phrase such as "In March" or
+  "Last November" is supported when it matches the evidence's date.
 - kind "seller_claim": states something about the seller's product. "supported" only if it
   matches an approved claim.
 - kind "other": greetings, questions, the ask; verdict "supported".
