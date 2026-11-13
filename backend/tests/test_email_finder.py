@@ -5,6 +5,7 @@ import pytest
 
 from app.pipeline.ports import Contact, EmailLookupFailed, FoundEmail
 from app.providers.email_finder import HunterEmailFinder
+from app.providers.search.fusion import MemoryLedger
 
 KEY = "hunter-test-key-1234"
 PRIYA = Contact(company_name="Acme", company_domain="acme.example", person_name="Priya Shah")
@@ -97,3 +98,27 @@ async def test_a_network_failure_is_a_failed_lookup():
     lookup = HunterEmailFinder(httpx.AsyncClient(transport=httpx.MockTransport(down)), KEY)
     with pytest.raises(EmailLookupFailed):
         await lookup.find(PRIYA)
+
+
+async def test_each_address_found_is_counted_against_the_monthly_allowance():
+    ledger = MemoryLedger()
+    found = HunterEmailFinder(
+        httpx.AsyncClient(transport=httpx.MockTransport(Hunter(httpx.Response(200, json=FOUND)))),
+        KEY,
+        ledger=ledger,
+        period=lambda: "2026-11",
+    )
+    none = HunterEmailFinder(
+        httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                Hunter(httpx.Response(200, json={"data": {"email": None}}))
+            )
+        ),
+        KEY,
+        ledger=ledger,
+        period=lambda: "2026-11",
+    )
+    await found.find(PRIYA)
+    await none.find(PRIYA)  # Hunter charges nothing when it finds nothing
+
+    assert await ledger.spent("hunter", "2026-11") == 1

@@ -95,7 +95,9 @@ class Runtime:
 
     def email_finder(self) -> HunterEmailFinder | None:
         key = self.settings.hunter_api_key
-        return HunterEmailFinder(self.http, key.get_secret_value()) if key else None
+        if not key:
+            return None
+        return HunterEmailFinder(self.http, key.get_secret_value(), ledger=self.ledger)
 
     async def close(self) -> None:
         await self.http.aclose()

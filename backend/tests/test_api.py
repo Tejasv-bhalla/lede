@@ -145,6 +145,32 @@ async def test_a_campaign_with_a_run_in_progress_cannot_be_deleted(client, world
     assert (await client.delete(f"/api/campaigns/{cid}", headers=AUTH)).status_code == 204
 
 
+async def test_each_campaign_in_the_list_carries_its_progress(client):
+    run_id = await finished_run(client)
+    cid = (await client.get(f"/api/runs/{run_id}", headers=AUTH)).json()["campaign_id"]
+    await client.post(
+        f"/api/campaigns/{cid}/prospects", json={"company_name": "Initech"}, headers=AUTH
+    )
+
+    def stats():
+        return client.get("/api/campaigns", headers=AUTH)
+
+    listed = {c["id"]: c["stats"] for c in (await stats()).json()}
+    assert listed[cid] == {
+        "prospects": 2,
+        "not_run": 1,
+        "to_review": 1,  # the draft is ready and nobody has reviewed it
+        "needs_you": 0,
+        "approved": 0,
+        "last_run_at": listed[cid]["last_run_at"],
+    }
+    assert listed[cid]["last_run_at"]
+
+    await review(client, run_id, action="approve")
+    after = {c["id"]: c["stats"] for c in (await stats()).json()}[cid]
+    assert (after["to_review"], after["approved"]) == (0, 1)
+
+
 async def test_validating_a_campaign_reports_conflicts_with_the_profile(client):
     await client.put("/api/profile", json=PROFILE, headers=AUTH)
     good = (await client.post("/api/campaigns", json=CAMPAIGN, headers=AUTH)).json()
@@ -513,6 +539,23 @@ async def test_dashboard_reports_median_run_time_and_search_quota(client, tmp_pa
     quota = {q["name"]: q for q in board["quota"]}
     assert quota["Tavily"]["limit"] == 1000 and quota["Tavily"]["unit"] == "credits"
     assert quota["Exa"]["unit"] == "USD"
+    assert "Hunter" not in quota  # shown only when an email finder key is set
+
+
+async def test_dashboard_shows_the_email_finder_allowance_when_a_key_is_set(tmp_path):
+    store = Store(f"sqlite:///{tmp_path / 'hunter.db'}")
+    await store.create_all()
+    settings = Settings(
+        _env_file=None, demo_access_code=SecretStr(CODE), hunter_api_key=SecretStr("k")
+    )
+    app = create_app(settings, store=store)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as c:
+        board = (await c.get("/api/dashboard", headers=AUTH)).json()
+    await store.dispose()
+    hunter = next(q for q in board["quota"] if q["name"] == "Hunter")
+    assert (hunter["used"], hunter["limit"], hunter["unit"]) == (0, 50, "email lookups")
 
 
 async def test_run_times_are_sent_as_explicit_utc(client):

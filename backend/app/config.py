@@ -30,6 +30,7 @@ class Settings(BaseSettings):
 
     # Email finder, asked only when no page read shows the contact's address
     hunter_api_key: SecretStr | None = None
+    hunter_monthly_credits: float = 50.0  # free plan: one credit per address found
 
     # Monthly search budgets (free tiers); the app stops calling an engine near its limit
     tavily_monthly_credits: float = 1000.0  # 1 credit per basic search

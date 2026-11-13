@@ -7,17 +7,36 @@ used.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from datetime import UTC, datetime
+
 import httpx
 
 from app.pipeline.ports import Contact, EmailLookupFailed, FoundEmail
+from app.providers.search.fusion import SearchLedger
 
 URL = "https://api.hunter.io/v2/email-finder"
 TIMEOUT_S = 15.0  # Hunter answers within its own 10-second default search time
 
 
+LEDGER_NAME = "hunter"
+
+
+def _this_month() -> str:
+    return datetime.now(UTC).strftime("%Y-%m")
+
+
 class HunterEmailFinder:
-    def __init__(self, http: httpx.AsyncClient, api_key: str) -> None:
+    def __init__(
+        self,
+        http: httpx.AsyncClient,
+        api_key: str,
+        *,
+        ledger: SearchLedger | None = None,
+        period: Callable[[], str] = _this_month,
+    ) -> None:
         self._http, self._key = http, api_key
+        self._ledger, self._period = ledger, period
 
     async def find(self, contact: Contact) -> FoundEmail | None:
         names = (contact.person_name or "").split()
@@ -45,6 +64,8 @@ class HunterEmailFinder:
         data = r.json().get("data") or {}
         if not data.get("email"):
             return None
+        if self._ledger is not None:  # Hunter charges a credit only for an address found
+            await self._ledger.charge(LEDGER_NAME, self._period(), 1)
         sources = data.get("sources") or []
         return FoundEmail(
             data["email"].casefold(),

@@ -96,7 +96,30 @@ async def put_profile(profile: SellerProfile, store: StoreDep) -> dict[str, Any]
 
 @api.get("/campaigns")
 async def list_campaigns(store: StoreDep) -> list[dict[str, Any]]:
-    return await store.list_campaigns()
+    """Every campaign, with how far its prospects have got."""
+    return [
+        {**c, "stats": await _campaign_stats(store, c["id"])} for c in await store.list_campaigns()
+    ]
+
+
+_NEEDS_YOU = {RunState.NEEDS_CLARIFICATION.value, RunState.CONTACT_MOVED.value}
+_DRAFTED = {RunState.DRAFT_READY.value, RunState.DRAFT_HELD.value}
+
+
+async def _campaign_stats(store: Store, campaign_id: str) -> dict[str, Any]:
+    prospects = await store.list_prospects(campaign_id)
+    runs = await store.list_runs(campaign_id=campaign_id)  # newest first
+    latest: dict[int, dict[str, Any]] = {}
+    for run in runs:
+        latest.setdefault(run["prospect_id"], run)
+    return {
+        "prospects": len(prospects),
+        "not_run": sum(pid not in latest for pid, _ in prospects),
+        "to_review": sum(r["state"] in _DRAFTED and not r["review_state"] for r in latest.values()),
+        "needs_you": sum(r["state"] in _NEEDS_YOU for r in latest.values()),
+        "approved": sum((r["review_state"] or "").startswith("APPROVED") for r in runs),
+        "last_run_at": runs[0]["created_at"] if runs else None,
+    }
 
 
 @api.post("/campaigns", status_code=201)
@@ -291,26 +314,36 @@ async def dashboard(store: StoreDep, request: Request) -> dict[str, Any]:
     durations = await store.run_durations()
     settings: Settings = request.app.state.settings
     spend = await store.engine_spend(datetime.now(UTC).strftime("%Y-%m"))
+    quota = [
+        {
+            "name": "Tavily",
+            "used": spend.get("tavily", 0.0),
+            "limit": settings.tavily_monthly_credits,
+            "unit": "credits",
+        },
+        {
+            "name": "Exa",
+            "used": round(spend.get("exa", 0.0), 3),
+            "limit": settings.exa_monthly_usd,
+            "unit": "USD",
+        },
+    ]
+    if settings.hunter_api_key:
+        quota.append(
+            {
+                "name": "Hunter",
+                "used": spend.get("hunter", 0.0),
+                "limit": settings.hunter_monthly_credits,
+                "unit": "email lookups",
+            }
+        )
     return {
         "runs_total": sum(by_state.values()),
         "by_state": by_state,
         "by_review": by_review,
         "approval_rate": round(approved / reviewed, 3) if reviewed else None,
         "median_run_seconds": round(statistics.median(durations), 1) if durations else None,
-        "quota": [
-            {
-                "name": "Tavily",
-                "used": spend.get("tavily", 0.0),
-                "limit": settings.tavily_monthly_credits,
-                "unit": "credits",
-            },
-            {
-                "name": "Exa",
-                "used": round(spend.get("exa", 0.0), 3),
-                "limit": settings.exa_monthly_usd,
-                "unit": "USD",
-            },
-        ],
+        "quota": quota,
     }
 
 
