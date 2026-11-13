@@ -1,0 +1,339 @@
+import { CircleAlert } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { toast } from 'sonner'
+
+import { useReview } from '@/api/hooks'
+import type { ClaimVerdict, Draft, Evidence, Review, RunState } from '@/api/types'
+import { ReviewBadge } from '@/components/status-badge'
+import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Textarea } from '@/components/ui/textarea'
+import { cn } from '@/lib/utils'
+
+import { SourceQuote } from './evidence'
+
+type Segment =
+  | { kind: 'text'; text: string }
+  | { kind: 'claim'; text: string; verdict: ClaimVerdict; evidence?: Evidence; n?: number }
+
+/** Find each checked claim in the email body, in order, without overlaps. */
+function segment(body: string, claims: ClaimVerdict[], byId: Map<string, Evidence>): Segment[] {
+  const lower = body.toLowerCase()
+  const spans = claims
+    .map((verdict) => {
+      const needle = verdict.claim.trim().replace(/[.!?]+$/, '')
+      const start = lower.indexOf(needle.toLowerCase())
+      return start < 0 || !needle ? null : { start, end: start + needle.length, verdict }
+    })
+    .filter((s): s is NonNullable<typeof s> => s !== null)
+    .sort((a, b) => a.start - b.start)
+
+  const numbers = new Map<string, number>()
+  const out: Segment[] = []
+  let cursor = 0
+  for (const s of spans) {
+    if (s.start < cursor) continue
+    if (s.start > cursor) out.push({ kind: 'text', text: body.slice(cursor, s.start) })
+    const evidence = s.verdict.evidence_id ? byId.get(s.verdict.evidence_id) : undefined
+    if (evidence && !numbers.has(evidence.id)) numbers.set(evidence.id, numbers.size + 1)
+    out.push({
+      kind: 'claim',
+      text: body.slice(s.start, s.end),
+      verdict: s.verdict,
+      evidence,
+      n: evidence ? numbers.get(evidence.id) : undefined,
+    })
+    cursor = s.end
+  }
+  if (cursor < body.length) out.push({ kind: 'text', text: body.slice(cursor) })
+  return out
+}
+
+function ClaimMark({ seg }: { seg: Extract<Segment, { kind: 'claim' }> }) {
+  const [open, setOpen] = useState(false)
+  const timer = useRef<number | undefined>(undefined)
+  const supported = seg.verdict.verdict === 'supported'
+  const show = () => {
+    window.clearTimeout(timer.current)
+    setOpen(true)
+  }
+  const hide = () => {
+    timer.current = window.setTimeout(() => setOpen(false), 120)
+  }
+
+  if (!supported)
+    return (
+      <span
+        className="underline decoration-destructive decoration-wavy decoration-1 underline-offset-4"
+        title={seg.verdict.reason || 'Not supported by the evidence'}
+      >
+        {seg.text}
+      </span>
+    )
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <span
+          role="button"
+          tabIndex={0}
+          onMouseEnter={show}
+          onMouseLeave={hide}
+          onFocus={show}
+          onBlur={hide}
+          className="evidence-mark cursor-help outline-offset-2"
+        >
+          {seg.text}
+        </span>
+      </PopoverTrigger>
+      <PopoverContent
+        className="w-96"
+        side="top"
+        onMouseEnter={show}
+        onMouseLeave={hide}
+        onOpenAutoFocus={(e) => e.preventDefault()}
+      >
+        {seg.evidence ? (
+          <SourceQuote e={seg.evidence} />
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            Matches one of your approved product claims.
+          </p>
+        )}
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+export function DraftView({
+  draft,
+  claims,
+  evidence,
+}: {
+  draft: Draft
+  claims: ClaimVerdict[]
+  evidence: Evidence[]
+}) {
+  const byId = useMemo(() => new Map(evidence.map((e) => [e.id, e])), [evidence])
+  const segments = useMemo(() => segment(draft.body, claims, byId), [draft.body, claims, byId])
+
+  return (
+    <article className="rounded-lg border bg-card px-8 py-7 shadow-[0_1px_0_0_var(--border)]">
+      <p className="mb-5 border-b pb-4 text-sm">
+        <span className="text-muted-foreground">Subject </span>
+        <span className="font-medium">{draft.subject}</span>
+      </p>
+      <div className="font-serif text-[1.08rem] leading-[1.75] whitespace-pre-wrap">
+        {segments.map((s, i) =>
+          s.kind === 'text' ? (
+            <span key={i}>{s.text}</span>
+          ) : (
+            <span key={i}>
+              <ClaimMark seg={s} />
+              {s.n && s.evidence && (
+                <a
+                  href={`#evidence-${s.evidence.id}`}
+                  aria-label={`Source ${s.n}`}
+                  className="ml-0.5 align-super font-sans text-[0.65rem] font-semibold text-primary"
+                >
+                  {s.n}
+                </a>
+              )}
+            </span>
+          ),
+        )}
+      </div>
+    </article>
+  )
+}
+
+export function DraftReview({
+  runId,
+  state,
+  draft,
+  claims,
+  evidence,
+  problems,
+  review,
+}: {
+  runId: string
+  state: RunState
+  draft: Draft
+  claims: ClaimVerdict[]
+  evidence: Evidence[]
+  problems: string[]
+  review: Review | null
+}) {
+  const act = useReview(runId)
+  const [editing, setEditing] = useState(false)
+  const [rejecting, setRejecting] = useState(false)
+  const [subject, setSubject] = useState(draft.subject)
+  const [body, setBody] = useState(draft.body)
+  const [reason, setReason] = useState('')
+  const canApprove = state === 'DRAFT_READY' && !review
+
+  async function send(
+    payload: Parameters<typeof act.mutateAsync>[0],
+    done: string,
+  ): Promise<boolean> {
+    try {
+      await act.mutateAsync(payload)
+      toast.success(done)
+      return true
+    } catch (err) {
+      toast.error('Not saved', { description: (err as Error).message })
+      return false
+    }
+  }
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const t = e.target as HTMLElement
+      if (review || editing || rejecting || e.metaKey || e.ctrlKey) return
+      if (t.closest('input, textarea, [contenteditable]')) return
+      if (e.key === 'a' && canApprove) void send({ action: 'approve' }, 'Draft approved')
+      if (e.key === 'e') setEditing(true)
+      if (e.key === 'x') setRejecting(true)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  })
+
+  const shown = review?.draft ?? draft
+
+  return (
+    <div className="flex flex-col gap-5">
+      {review && (
+        <div className="flex items-center gap-3 text-sm">
+          <ReviewBadge state={review.state} />
+          {review.reason && <span className="text-muted-foreground">“{review.reason}”</span>}
+        </div>
+      )}
+
+      {problems.length > 0 && !review && (
+        <div className="rounded-lg border border-held/35 bg-held/8 px-4 py-3 text-sm">
+          <p className="flex items-center gap-2 font-medium">
+            <CircleAlert className="size-4 text-held" /> Fix these before approving
+          </p>
+          <ul className="mt-1.5 list-disc pl-6 text-muted-foreground">
+            {problems.map((p) => (
+              <li key={p}>{p}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {editing ? (
+        <div className="flex flex-col gap-3 rounded-lg border bg-card p-5">
+          <Input
+            aria-label="Subject"
+            value={subject}
+            onChange={(e) => setSubject(e.target.value)}
+          />
+          <Textarea
+            aria-label="Email"
+            value={body}
+            rows={9}
+            onChange={(e) => setBody(e.target.value)}
+            className="font-serif text-[1.02rem] leading-relaxed"
+          />
+          <p className="text-xs text-muted-foreground">
+            Edits are re-checked against this run's rules. New facts you add are your
+            responsibility: they are not in the evidence.
+          </p>
+        </div>
+      ) : (
+        <DraftView draft={shown} claims={review ? [] : claims} evidence={evidence} />
+      )}
+
+      {!review && (
+        <div className="sticky bottom-4 z-20 flex items-center justify-between gap-3 rounded-lg border bg-card/95 px-4 py-3 shadow-lg backdrop-blur">
+          <p className="text-xs text-muted-foreground">
+            {editing
+              ? 'Saving approves your edited version.'
+              : 'Shortcuts: A approve, E edit, X reject'}
+          </p>
+          <div className="flex gap-2">
+            {editing ? (
+              <>
+                <Button variant="ghost" onClick={() => setEditing(false)}>
+                  Cancel
+                </Button>
+                <Button
+                  disabled={act.isPending}
+                  onClick={async () => {
+                    if (await send({ action: 'edit', subject, body }, 'Edited draft approved'))
+                      setEditing(false)
+                  }}
+                >
+                  Save and approve
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button variant="ghost" onClick={() => setRejecting(true)}>
+                  Reject
+                </Button>
+                <Button variant="outline" onClick={() => setEditing(true)}>
+                  Edit
+                </Button>
+                <Button
+                  disabled={!canApprove || act.isPending}
+                  title={canApprove ? undefined : 'Edit the flagged sentences first'}
+                  onClick={() => send({ action: 'approve' }, 'Draft approved')}
+                >
+                  Approve
+                </Button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      <Dialog open={rejecting} onOpenChange={setRejecting}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Reject this draft</DialogTitle>
+            <DialogDescription>
+              Say what was wrong. Reasons are kept to improve future drafts.
+            </DialogDescription>
+          </DialogHeader>
+          <Textarea
+            autoFocus
+            rows={3}
+            placeholder="Wrong person, weak opener, tone…"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+          />
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setRejecting(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={!reason.trim() || act.isPending}
+              onClick={async () => {
+                if (await send({ action: 'reject', reason }, 'Draft rejected')) setRejecting(false)
+              }}
+            >
+              Reject draft
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <p className={cn('sr-only')} aria-live="polite">
+        {act.isPending ? 'Saving' : ''}
+      </p>
+    </div>
+  )
+}

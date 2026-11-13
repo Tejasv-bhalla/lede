@@ -1,0 +1,197 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
+@import '@fontsource/ibm-plex-sans/400.css';
+@import '@fontsource/ibm-plex-sans/500.css';
+@import '@fontsource/ibm-plex-sans/600.css';
+@import '@fontsource-variable/source-serif-4';
+
+/*
+ * Design tokens: "the fact-checker's desk".
+ * Ink on paper; one action blue; highlighter yellow is reserved for verified evidence.
+ * Serif = human words (drafts, quotes). Sans = the system.
+ */
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --font-sans: 'IBM Plex Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-serif: 'Source Serif 4 Variable', ui-serif, Georgia, serif;
+  --font-heading: var(--font-sans);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  /* evidence and status: one meaning per colour, everywhere */
+  --color-mark: var(--mark);
+  --color-mark-ink: var(--mark-ink);
+  --color-ready: var(--ready);
+  --color-held: var(--held);
+  --color-sensitive: var(--sensitive);
+  --color-clarify: var(--clarify);
+  --color-quiet: var(--quiet);
+  --color-chart-1: var(--ready);
+  --color-chart-2: var(--held);
+  --color-chart-3: var(--clarify);
+  --color-chart-4: var(--quiet);
+  --color-chart-5: var(--sensitive);
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
+}
+
+:root {
+  --radius: 10px;
+  --background: #f5f6f8; /* paper */
+  --foreground: #1b2340; /* ink */
+  --card: #ffffff;
+  --card-foreground: #1b2340;
+  --popover: #ffffff;
+  --popover-foreground: #1b2340;
+  --primary: #2f5bea; /* the one action colour */
+  --primary-foreground: #ffffff;
+  --secondary: #eceef3;
+  --secondary-foreground: #1b2340;
+  --muted: #eceef3;
+  --muted-foreground: #5b6378;
+  --accent: #e9eefc;
+  --accent-foreground: #1b2340;
+  --destructive: #c2413b;
+  --border: #dce0e8;
+  --input: #cfd4de;
+  --ring: #2f5bea;
+
+  --sidebar: #eef0f4;
+  --sidebar-foreground: #1b2340;
+  --sidebar-border: #dce0e8;
+  --sidebar-accent: #e1e5ee;
+  --sidebar-accent-foreground: #1b2340;
+  --sidebar-primary: #2f5bea;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-ring: #2f5bea;
+
+  --mark: #ffe36e; /* highlighter: verified evidence only */
+  --mark-ink: #4a3b00;
+  --ready: #1e8a5a;
+  --held: #b7791f;
+  --sensitive: #c2413b;
+  --clarify: #6b4fd8;
+  --quiet: #64748b;
+}
+
+.dark {
+  --background: #0f1424;
+  --foreground: #e6e9f2;
+  --card: #161c30;
+  --card-foreground: #e6e9f2;
+  --popover: #1a2138;
+  --popover-foreground: #e6e9f2;
+  --primary: #6d8cf5;
+  --primary-foreground: #0f1424;
+  --secondary: #1f2740;
+  --secondary-foreground: #e6e9f2;
+  --muted: #1f2740;
+  --muted-foreground: #9aa3b8;
+  --accent: #222c4a;
+  --accent-foreground: #e6e9f2;
+  --destructive: #ef6b63;
+  --border: #283150;
+  --input: #2f3a5c;
+  --ring: #6d8cf5;
+
+  --sidebar: #121829;
+  --sidebar-foreground: #e6e9f2;
+  --sidebar-border: #232b45;
+  --sidebar-accent: #1f2740;
+  --sidebar-accent-foreground: #e6e9f2;
+  --sidebar-primary: #6d8cf5;
+  --sidebar-primary-foreground: #0f1424;
+  --sidebar-ring: #6d8cf5;
+
+  --mark: #6b5a12;
+  --mark-ink: #fff3bf;
+  --ready: #4cc38a;
+  --held: #e0a24a;
+  --sensitive: #ef6b63;
+  --clarify: #a28cf4;
+  --quiet: #94a3b8;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    font-feature-settings: 'tnum' 1; /* tabular figures: numbers line up in tables */
+  }
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-size: 15px;
+    line-height: 1.5;
+  }
+  h1 {
+    @apply text-[1.6rem] font-semibold tracking-tight leading-tight;
+  }
+  h2 {
+    @apply text-lg font-semibold tracking-tight;
+  }
+  h3 {
+    @apply text-[0.95rem] font-semibold;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+/* The highlighter mark on verified claims: a slightly uneven felt-tip stroke. */
+@utility evidence-mark {
+  background-image: linear-gradient(
+    100deg,
+    transparent 0.2em,
+    var(--mark) 0.35em,
+    var(--mark) calc(100% - 0.35em),
+    transparent calc(100% - 0.2em)
+  );
+  background-size: 100% 72%;
+  background-position: 0 70%;
+  background-repeat: no-repeat;
+  color: inherit;
+  border-radius: 2px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  padding: 0 0.15em;
+}
+.dark .evidence-mark {
+  color: var(--mark-ink);
+}
