@@ -241,3 +241,23 @@ async def test_a_model_that_hangs_is_rested_like_an_overloaded_one():
     await router.structured("writer", "q1", Verdict)
     await router.structured("writer", "q2", Verdict)
     assert calls == ["gemini.test", "groq.test", "groq.test"]
+
+
+async def test_a_provider_rejecting_its_own_malformed_json_gets_the_corrective_retry():
+    seen: list[str] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen.append(req.content.decode())
+        if len(seen) == 1:  # Groq's way of saying its model produced invalid JSON
+            return httpx.Response(
+                400,
+                json={
+                    "error": {"message": "Failed to generate JSON", "code": "json_validate_failed"}
+                },
+            )
+        return completion(VALID)
+
+    router = router_with(handler, {"checker": [GROQ, GEMINI]})
+    result = await router.structured("checker", "q", Verdict)
+    assert result.provider == "groq"
+    assert "did not match the required schema" in seen[1]

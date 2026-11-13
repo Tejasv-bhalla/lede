@@ -16,7 +16,13 @@ from dataclasses import dataclass
 from typing import Any
 
 import httpx2
-from openai import APIConnectionError, APIStatusError, AsyncOpenAI, RateLimitError
+from openai import (
+    APIConnectionError,
+    APIStatusError,
+    AsyncOpenAI,
+    BadRequestError,
+    RateLimitError,
+)
 from openai.types.chat import ChatCompletionMessageParam
 from pydantic import BaseModel, ValidationError
 
@@ -139,28 +145,36 @@ class LLMRouter:
         ]
         for attempt in range(JSON_RETRIES + 1):
             started = time.perf_counter()
-            response = await self._clients[provider.name].chat.completions.create(
-                model=provider.model,
-                messages=messages,
-                response_format={"type": "json_object"},
-            )
-            content = response.choices[0].message.content or ""
-            self._report(role, provider, response.usage, started)
             try:
-                return Structured(
-                    schema.model_validate_json(content), provider.name, provider.model
+                response = await self._clients[provider.name].chat.completions.create(
+                    model=provider.model,
+                    messages=messages,
+                    response_format={"type": "json_object"},
                 )
-            except ValidationError as exc:
-                if attempt == JSON_RETRIES:
+            except BadRequestError as exc:
+                if not _malformed_json(exc) or attempt == JSON_RETRIES:
                     raise
-                messages += [
-                    {"role": "assistant", "content": content},
-                    {
-                        "role": "user",
-                        "content": "Your previous answer did not match the required schema: "
-                        f"{exc.errors(include_url=False)}. Reply with corrected JSON only.",
-                    },
-                ]
+                content, problem = "", "it was not valid JSON"
+            else:
+                content = response.choices[0].message.content or ""
+                self._report(role, provider, response.usage, started)
+                try:
+                    return Structured(
+                        schema.model_validate_json(content), provider.name, provider.model
+                    )
+                except ValidationError as exc:
+                    if attempt == JSON_RETRIES:
+                        raise
+                    problem = str(exc.errors(include_url=False))
+            if content:
+                messages.append({"role": "assistant", "content": content})
+            messages.append(
+                {
+                    "role": "user",
+                    "content": "Your previous answer did not match the required schema: "
+                    f"{problem}. Reply with corrected JSON only.",
+                }
+            )
         raise AssertionError("unreachable")
 
     def _report(self, role: str, provider: Provider, usage: Any, started: float) -> None:
@@ -182,3 +196,11 @@ def _retry_after(exc: APIStatusError) -> float | None:
         return float(exc.response.headers.get("retry-after", ""))
     except ValueError:
         return None
+
+
+def _malformed_json(exc: BadRequestError) -> bool:
+    """Groq rejects its own model's output with 400 json_validate_failed; that is a bad answer
+    worth one corrective retry, not a bad request."""
+    body = exc.body if isinstance(exc.body, dict) else {}
+    error = body.get("error", body)
+    return isinstance(error, dict) and error.get("code") == "json_validate_failed"
