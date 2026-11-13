@@ -51,6 +51,8 @@ export function useCampaign(id: string) {
   return useQuery({
     queryKey: keys.campaign(id),
     queryFn: () => api.get<Campaign>(`/campaigns/${id}`),
+    // A new campaign has no id; '/campaigns/' would redirect to the list.
+    enabled: Boolean(id),
   })
 }
 
