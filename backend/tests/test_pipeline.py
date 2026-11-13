@@ -23,7 +23,7 @@ from app.pipeline.run import PipelineDeps, StageEvent, run_prospect
 from app.policy.draft_rules import DraftRules
 from app.providers.llm_router import LLMUnavailable
 from app.research.ports import Candidate, Page
-from tests.fakes import FakeWriter
+from tests.fakes import FakeFactChecker, FakeWriter
 from tests.scenario import (
     CAREERS,
     GOOD_DRAFT,
@@ -514,3 +514,19 @@ async def test_research_reports_progress_between_its_start_and_end():
     assert [e.status for e in research] == ["started", "progress", "done"]
     assert research[1].summary.startswith("Round 1:")
     assert set(research[1].items) == {PODCAST_QUOTE.claim, HIRING.claim}
+
+
+class FactCheckerThatChecksNothing(FakeFactChecker):
+    async def check(self, draft, request):
+        self.checked.append(draft.body)
+        return []
+
+
+async def test_a_fact_check_that_verifies_nothing_is_retried_then_holds_the_draft():
+    checker = FactCheckerThatChecksNothing()
+    d = replace(deps(scores={PODCAST_QUOTE.claim: 4.5}), fact_checker=checker)
+    outcome = await run(d)
+
+    assert len(checker.checked) == 2
+    assert outcome.state is RunState.DRAFT_HELD
+    assert any("could not match" in p for p in outcome.problems)

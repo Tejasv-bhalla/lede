@@ -216,6 +216,16 @@ def _problems(draft: Draft, verdicts: list[ClaimVerdict], rules: DraftRules) -> 
     return unsupported + [f"Rule {v.kind}: {v.detail}" for v in check_draft(draft.body, rules)]
 
 
+UNCHECKED = (
+    "The fact-check could not match any sentence to the evidence. Check the opening line "
+    "against the sources yourself before approving."
+)
+
+
+def _grounded(verdicts: list[ClaimVerdict]) -> bool:
+    return any(v.evidence_id and v.verdict is Entailment.SUPPORTED for v in verdicts)
+
+
 async def _fact_check(
     draft: Draft, request: DraftRequest, deps: PipelineDeps
 ) -> tuple[Draft, list[str], list[ClaimVerdict]]:
@@ -226,6 +236,13 @@ async def _fact_check(
     for attempt in range(MAX_REVISIONS + 1):
         verdicts = await deps.fact_checker.check(draft, request)
         problems = _problems(draft, verdicts, request.rules)
+        if not problems and not _grounded(verdicts):
+            # A check that tied nothing to evidence is not a pass: ask once more, then say so.
+            verdicts = await deps.fact_checker.check(draft, request)
+            problems = _problems(draft, verdicts, request.rules)
+            if not problems and not _grounded(verdicts):
+                problems = [UNCHECKED]
+            return draft, problems, verdicts
         if not problems or attempt == MAX_REVISIONS:
             return draft, problems, verdicts
         draft = await deps.writer.revise(draft, problems, request)

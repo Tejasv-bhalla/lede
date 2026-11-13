@@ -147,7 +147,8 @@ class FakeWriter:
 
 
 class FakeFactChecker:
-    """Flags the listed sentences as unsupported whenever they appear in a draft."""
+    """Confirms each cited evidence id, and flags the listed sentences as unsupported whenever
+    they appear in a draft."""
 
     def __init__(self, unsupported: Iterable[str] = ()):
         self.unsupported = list(unsupported)
@@ -155,7 +156,11 @@ class FakeFactChecker:
 
     async def check(self, draft: Draft, request: DraftRequest) -> list[ClaimVerdict]:
         self.checked.append(draft.body)
-        return [
+        cited = [
+            ClaimVerdict(claim=f"fact {eid}", verdict=Entailment.SUPPORTED, evidence_id=eid)
+            for eid in draft.citations
+        ]
+        return cited + [
             ClaimVerdict(claim=s, verdict=Entailment.UNSUPPORTED, reason="not in evidence")
             for s in self.unsupported
             if s in draft.body
