@@ -403,3 +403,32 @@ async def test_health_check_is_public_and_never_touches_the_database(tmp_path):
         r = await c.get("/api/health")
     assert (r.status_code, r.json()) == (200, {"ok": True, "runs_enabled": False})
     await store.dispose()
+
+
+async def test_each_prospect_shows_its_latest_run(client, world):
+    cid, pid = await ready_prospect(client)
+    other = (
+        await client.post(
+            f"/api/campaigns/{cid}/prospects", json={"company_name": "Initech"}, headers=AUTH
+        )
+    ).json()["id"]
+    await events_of(client, await start_run(client, prospect_id=pid, tier="quick"))
+    world["deps"] = lambda: deps(scores={PODCAST_QUOTE.claim: 1.0})
+    latest = await start_run(client, prospect_id=pid, tier="quick")
+    await events_of(client, latest)
+
+    rows = {
+        p["id"]: p
+        for p in (await client.get(f"/api/campaigns/{cid}/prospects", headers=AUTH)).json()
+    }
+    assert (rows[pid]["last_run"]["id"], rows[pid]["last_run"]["state"]) == (latest, "LOW_SIGNAL")
+    assert rows[other]["last_run"] is None
+
+
+async def test_dashboard_reports_median_run_time_and_search_quota(client, tmp_path):
+    await finished_run(client)
+    board = (await client.get("/api/dashboard", headers=AUTH)).json()
+    assert board["median_run_seconds"] is not None
+    quota = {q["name"]: q for q in board["quota"]}
+    assert quota["Tavily"]["limit"] == 1000 and quota["Tavily"]["unit"] == "credits"
+    assert quota["Exa"]["unit"] == "USD"

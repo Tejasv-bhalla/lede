@@ -279,6 +279,34 @@ class Store:
                 for r in await s.scalars(query)
             ]
 
+    async def latest_runs(self, campaign_id: str) -> dict[int, dict[str, Any]]:
+        """The most recent run of each prospect in a campaign."""
+        query = (
+            select(RunRow)
+            .where(RunRow.campaign_id == campaign_id)
+            .order_by(RunRow.created_at.desc())
+        )
+        latest: dict[int, dict[str, Any]] = {}
+        async with self.session() as s:
+            for row in await s.scalars(query):
+                latest.setdefault(row.prospect_id, row.summary())
+        return latest
+
+    async def run_durations(self) -> list[float]:
+        """Seconds from start to finish of every finished run."""
+        query = select(RunRow.created_at, RunRow.finished_at).where(RunRow.finished_at.is_not(None))
+        async with self.session() as s:
+            return [
+                (finished - created).total_seconds()
+                for created, finished in await s.execute(query)
+                if finished is not None
+            ]
+
+    async def engine_spend(self, period: str) -> dict[str, float]:
+        async with self.session() as s:
+            rows = await s.scalars(select(EngineSpendRow).where(EngineSpendRow.period == period))
+            return {r.engine: r.spent for r in rows}
+
 
 class StoreLedger:
     """The search cache and engine spend, kept in the database so restarts don't forget them."""

@@ -6,10 +6,11 @@ import csv
 import hmac
 import io
 import json
+import statistics
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import asdict
-from datetime import date
+from datetime import UTC, date, datetime
 from typing import Annotated, Any
 
 from fastapi import (
@@ -145,7 +146,11 @@ async def validate_campaign(campaign_id: str, store: StoreDep) -> dict[str, Any]
 @api.get("/campaigns/{campaign_id}/prospects")
 async def list_prospects(campaign_id: str, store: StoreDep) -> list[dict[str, Any]]:
     await _campaign(store, campaign_id)
-    return [{"id": pid, **data} for pid, data in await store.list_prospects(campaign_id)]
+    latest = await store.latest_runs(campaign_id)
+    return [
+        {"id": pid, **data, "last_run": latest.get(pid)}
+        for pid, data in await store.list_prospects(campaign_id)
+    ]
 
 
 @api.post("/campaigns/{campaign_id}/prospects", status_code=201)
@@ -265,15 +270,34 @@ async def review_run(run_id: str, body: ReviewRequest, runs: RunsDep) -> dict[st
 
 
 @api.get("/dashboard")
-async def dashboard(store: StoreDep) -> dict[str, Any]:
+async def dashboard(store: StoreDep, request: Request) -> dict[str, Any]:
+    """Run outcomes, review results and this month's search spend against free-tier limits."""
     by_state, by_review = await store.count_runs()
     reviewed = sum(by_review.values())
     approved = by_review.get("APPROVED", 0) + by_review.get("APPROVED_WITH_EDITS", 0)
+    durations = await store.run_durations()
+    settings: Settings = request.app.state.settings
+    spend = await store.engine_spend(datetime.now(UTC).strftime("%Y-%m"))
     return {
         "runs_total": sum(by_state.values()),
         "by_state": by_state,
         "by_review": by_review,
         "approval_rate": round(approved / reviewed, 3) if reviewed else None,
+        "median_run_seconds": round(statistics.median(durations), 1) if durations else None,
+        "quota": [
+            {
+                "name": "Tavily",
+                "used": spend.get("tavily", 0.0),
+                "limit": settings.tavily_monthly_credits,
+                "unit": "credits",
+            },
+            {
+                "name": "Exa",
+                "used": round(spend.get("exa", 0.0), 3),
+                "limit": settings.exa_monthly_usd,
+                "unit": "USD",
+            },
+        ],
     }
 
 
