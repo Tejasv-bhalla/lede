@@ -518,7 +518,7 @@ With paid keys the same code does 200 in one sitting, which is a config change. 
 | Search | **Tavily** as the primary (free: 1,000 credits a month, `topic:"news"`). **Exa** free credits as the secondary (entity guardrails: `includeText`, `category:"news"`). `ddgs` (DuckDuckGo, no key) for development and as a last resort only. All behind a `SearchProvider` adapter. | `NOT TESTED`: bake-off on 10 prospects. Exa's free allowance is inconsistent across sources; confirm at signup. |
 | Fetch and extract | Provider contents first. Otherwise `httpx` plus `trafilatura` for main-text extraction. Raw HTML and text stored. | Needed for quote checks and snapshots |
 | Dedup and chunk selection | `rapidfuzz` (query and claim deduplication) and `rank_bm25` (choosing the most relevant passages of each page). Both run locally and are free. | Jina pattern without paid embeddings. Cuts the tokens sent to the reader model by roughly 70–80% [I]. |
-| Database and auth | **Supabase free** (Postgres + Auth + Storage), row-level security per workspace. Local development uses Postgres in Docker. | Free projects pause after 7 days of low activity, so a GitHub Actions cron job pings the database daily. Alternative: Neon free, which wakes up automatically. |
+| Database and auth | **Supabase free** (Postgres + Auth + Storage), row-level security per workspace. *(Full product only; v0 uses Neon, see §16.2.)* Local development uses Postgres in Docker. | Free projects pause after 7 days of low activity, so a GitHub Actions cron job pings the database daily. Alternative: Neon free, which wakes up automatically. |
 | Page snapshots | Supabase Storage (by content hash) | Evidence survives page changes (edge case 20) |
 | LLM tracing and evals | **Langfuse Cloud Hobby** (free: 50k units a month, 30-day retention) or self-hosted in Docker | Prompt versions, tokens, traces, datasets and judge scores |
 | Frontend | **Next.js + shadcn/ui** as a thin client (no business logic) | The UI is graded. All logic stays in Python. |
@@ -594,7 +594,7 @@ If a gate fails → regenerate with the failure reason, at most twice. If it sti
 **4. Free first-party data sources raise quality and save quota (§3.7).** Company sites, job boards, news feeds and filings are fetched directly. They are more authoritative and better dated than generic search results, and cost nothing.
 
 **5. The experience must not show it's free:**
-- **No cold starts:** Render's free 750 hours a month covers one service running all month (744 hours), so a free uptime pinger keeps it awake. A daily ping keeps Supabase from pausing.
+- **No cold starts:** Render's free 750 hours a month covers one service running all month (744 hours), so a free uptime pinger keeps it awake. The pinger hits a health check that does **not** query the database, so Neon can sleep between real visits (its free plan has 100 compute-hours a month; awake around the clock would need about 180).
 - **No raw errors:** a 429 or provider outage silently falls back to the next provider. The UI never shows a rate-limit error.
 - **Quota-aware start:** before a run starts, the system checks remaining daily quota for the chosen tier. If it's short, it offers Quick tier or queues the run with an ETA, instead of failing halfway.
 - **The wait feels useful:** the live view streams signals as they are found, and partial results are usable before the draft is ready. Groq's fast inference keeps judgment steps sub-second.
@@ -875,7 +875,7 @@ Items cut from v0, ordered by value to a real user:
 - **All effort tiers:** Quick, Standard, Deep. Deep includes bounded gap sub-agents (≤8 tool calls each, ≤3 concurrent).
 - **Best-of-2 drafting, double-sampled hook scoring**, and a quick model bake-off for the `judge` and `writer` roles on 5 prospects.
 - **LLM consistency check** on profile + campaign, alongside the rule-based checks.
-- **Mistral** as a third cloud provider (adds capacity, so quota limits don't reduce research depth).
+- **A third cloud provider** for capacity, so quota limits don't reduce research depth. Mistral was planned, but since October 2026 new free Mistral accounts can't activate API keys; GitHub Models (free with a GitHub token) replaces it. Mistral stays optional in the router if a key is ever added.
 - **CSV two-pass triage:** Quick for all rows, Standard on the selected rows.
 - **Batch sameness check** on drafts.
 - **Rep notes / pasted post field.** Labelled rep-supplied evidence; partly closes the LinkedIn gap.
@@ -895,7 +895,7 @@ Items cut from v0, ordered by value to a real user:
 | DBOS durable workflows | Background task + events in Postgres; cache makes re-runs cheap | Reliability only; a re-run gives the same result from the cache |
 | Durable pause for clarification | Run ends `NEEDS_CLARIFICATION` → rep picks → new run with the identity pinned (cache reused) | Same outcome, different plumbing |
 | Profile versioning | Merged-brief snapshot stored per run | Same audit trail |
-| Ollama in production | Local development only | Render free can't run it; Mistral covers capacity |
+| Ollama in production | Local development only | Render free can't run it; GitHub Models covers capacity |
 | CSV column-mapping UI | Fixed template columns + validation preview | Input convenience only |
 | Quota scheduler with ETA | Batch pauses with a clear "quota reached, resume" button | Same results, less automation |
 | Langfuse | Own `llm_calls` table (prompt, response, tokens, latency) shown in the run view | Same debugging data |
@@ -908,9 +908,9 @@ Items cut from v0, ordered by value to a real user:
 | Frontend | **React + TypeScript + Vite**, **Tailwind**, **shadcn/ui** (Radix), **lucide** icons, **TanStack Query**, **Recharts** (via shadcn charts) | A professional SaaS look out of the box, accessible components, dark mode. Vite rather than Next.js because v0 needs no server rendering, which means one fewer server and a faster build. |
 | Live updates | Server-Sent Events from FastAPI → `EventSource` in React | Live stage timeline without WebSocket complexity |
 | Backend | **FastAPI** + Pydantic + SQLAlchemy | As in the product spec |
-| Database | **Supabase Postgres** (used as a plain Postgres database); SQLite for local development via the same SQLAlchemy URL | History survives restarts |
+| Database | **Neon Postgres, free plan, Singapore** (used as a plain Postgres database, direct connection without the pooler); SQLite for local development via the same SQLAlchemy URL | History survives restarts. Chosen over Supabase (13 Nov 2026): Supabase's free projects pause after 7 days without use and need a manual restore, which would break the demo for late reviewers; Neon sleeps when idle and wakes on the next connection. |
 | Deploy | **One Render free web service**. A multi-stage Docker build compiles the React app, and FastAPI serves it as static files. Kept awake by a free uptime pinger. | One URL, no CORS, one thing to keep running |
-| AI and search | Groq + Gemini + Mistral behind the role router; Tavily + Exa + DuckDuckGo with rank fusion; all free connectors; trafilatura + htmldate + extruct; Jina Reader fallback | Breadth and depth of research are not reduced in v0 |
+| AI and search | Groq + Gemini + GitHub Models (Mistral optional) behind the role router; Tavily + Exa + DuckDuckGo with rank fusion; all free connectors; trafilatura + htmldate + extruct; Jina Reader fallback | Breadth and depth of research are not reduced in v0 |
 
 ### 16.3 Screens (the graded UI)
 
