@@ -246,7 +246,7 @@ async def _stages(
     identity = outcome.identity = (
         Identity(IdentityStatus.CONFIRMED, contact=pinned)
         if pinned
-        else await deps.resolver.resolve(prospect)
+        else await deps.resolver.resolve(prospect, brief)
     )
     contact = identity.contact
     if identity.status is IdentityStatus.NOT_FOUND:

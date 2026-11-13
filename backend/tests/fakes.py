@@ -81,7 +81,7 @@ class FakeResolver:
         self.identity = identity
         self.calls = 0
 
-    async def resolve(self, prospect: ProspectInput) -> Identity:
+    async def resolve(self, prospect: ProspectInput, brief: MergedBrief) -> Identity:
         self.calls += 1
         return self.identity
 

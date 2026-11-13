@@ -72,7 +72,10 @@ class DraftRequest:
 
 
 class Resolver(Protocol):
-    async def resolve(self, prospect: ProspectInput) -> Identity: ...
+    async def resolve(self, prospect: ProspectInput, brief: MergedBrief) -> Identity:
+        """The brief supplies the target persona, used to suggest a contact for company-only
+        input."""
+        ...
 
 
 class EntailmentChecker(Protocol):
