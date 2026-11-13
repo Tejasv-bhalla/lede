@@ -432,3 +432,10 @@ async def test_dashboard_reports_median_run_time_and_search_quota(client, tmp_pa
     quota = {q["name"]: q for q in board["quota"]}
     assert quota["Tavily"]["limit"] == 1000 and quota["Tavily"]["unit"] == "credits"
     assert quota["Exa"]["unit"] == "USD"
+
+
+async def test_run_times_are_sent_as_explicit_utc(client):
+    run_id = await finished_run(client)
+    run = (await client.get(f"/api/runs/{run_id}", headers=AUTH)).json()
+    for stamp in (run["created_at"], run["finished_at"]):
+        assert stamp.endswith("+00:00"), stamp

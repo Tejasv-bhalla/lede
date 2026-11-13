@@ -25,6 +25,11 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
+def _utc(moment: datetime) -> datetime:
+    """SQLite hands back naive datetimes; everything we store is UTC, so say so."""
+    return moment if moment.tzinfo else moment.replace(tzinfo=UTC)
+
+
 def async_url(url: str) -> str:
     """Accept the plain URLs people copy from dashboards and pick the async driver."""
     for plain, driver in (
@@ -88,8 +93,8 @@ class RunRow(Base):
             "state": self.state,
             "review_state": self.review_state,
             "prospect": self.inputs["prospect"],
-            "created_at": self.created_at.isoformat(),
-            "finished_at": self.finished_at.isoformat() if self.finished_at else None,
+            "created_at": _utc(self.created_at).isoformat(),
+            "finished_at": _utc(self.finished_at).isoformat() if self.finished_at else None,
         }
 
 
