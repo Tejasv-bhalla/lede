@@ -13,6 +13,7 @@ import { HookScoreboard } from '@/components/run/hook-scoreboard'
 import { ClarificationPicker, ContactMoved, NoDraft } from '@/components/run/outcome-panels'
 import { StageTimeline } from '@/components/run/stage-timeline'
 import type { TimedEvent } from '@/lib/stages'
+import { cn } from '@/lib/utils'
 import { StateBadge } from '@/components/status-badge'
 import { Skeleton } from '@/components/ui/skeleton'
 
@@ -97,7 +98,15 @@ function FinishedRun({ run, events }: { run: RunDetail; events: TimedEvent[] }) 
 
   const hasDraft = Boolean(outcome?.draft)
   return (
-    <div className="grid grid-cols-[minmax(260px,320px)_minmax(0,1fr)_minmax(260px,320px)] gap-8 max-xl:grid-cols-[minmax(0,1fr)_300px]">
+    <div
+      className={cn(
+        'grid gap-8 max-xl:grid-cols-[minmax(0,1fr)_300px]',
+        // The right-hand scoreboard only exists with a draft; otherwise the panel takes its room.
+        hasDraft
+          ? 'grid-cols-[minmax(260px,320px)_minmax(0,1fr)_minmax(260px,320px)]'
+          : 'grid-cols-[minmax(260px,320px)_minmax(0,1fr)]',
+      )}
+    >
       <aside className="flex flex-col gap-8 max-xl:order-2">
         <section>
           <h2 className="mb-3 text-base">How it went</h2>
