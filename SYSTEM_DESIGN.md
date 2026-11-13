@@ -1,6 +1,12 @@
 # PS-3 System Design — Prospect → Evidence-Grounded Outreach Draft
 
-**Status:** `PROPOSED` design, 12 Nov 2026. Supersedes the architecture sections of `PS3_Latest_Research_Log.md`.
+**Status:** design written 12–13 Nov 2026; prototype built and deployed 13 Nov 2026.
+- §1–15 are the **full product design** (the target).
+- §16 is the **prototype plan** as written before the build.
+- **§17 is what was actually built**, checked against the code. Where §16 and §17 differ, §17 is
+  current. The [README](README.md) explains how to use and run the built system.
+
+Supersedes the architecture sections of `PS3_Latest_Research_Log.md`.
 **Basis:** three research passes, covering 14 commercial tools, 17 open-source repos (source code read), and about 30 engineering and research write-ups. Sources are in §15.
 
 **Labels:**
@@ -746,9 +752,9 @@ web/              Next.js app
 - We build **Phase P (Prototype v0, §16) first**. It covers the whole core workflow at full research, lead and message quality, simplifying only plumbing that doesn't affect output.
 - Once Phase P is done, any time left goes into the add-back list below, in order. The product phases follow after that.
 
-### Phase P: Prototype v0 (building now)
+### Phase P: Prototype v0 (built, 13 Nov 2026)
 
-Scope, cuts, stack, screens, API contract and timeline: **§16**. It includes the Phase 0 spikes, minus DBOS.
+Planned scope, cuts, stack, screens, API contract and timeline: **§16**. What was built: **§17**.
 
 **Exit criteria:**
 - A deployed URL.
@@ -845,7 +851,10 @@ Items cut from v0, ordered by value to a real user:
 
 ---
 
-## 16. Prototype v0: the 24-hour build (what we are building now)
+## 16. Prototype v0: the plan (written before the build)
+
+> This section is kept as the plan of record. Some planned items were not built and others were
+> added; **§17 lists what exists**.
 
 **Purpose:** a placement-interview submission. It must **look like a professional SaaS product** and run the full core workflow live. Sections 1–15 remain the product spec. This section says what v0 builds, what it simplifies, and why.
 
@@ -985,3 +994,97 @@ The frontend is built against typed mock responses generated from the Pydantic m
 4. Dark-mode polish.
 
 **Never cut:** research sources, the research loop, quote verification, scoring, best-of-2 drafting, fact-check, company-only suggestion, the live view, review.
+
+---
+
+## 17. As built (13 Nov 2026)
+
+Checked against the code. The [README](README.md) has the user-facing description, setup,
+configuration and API.
+
+### 17.1 Built as planned
+
+- Seller profile and campaign, merged into one brief with rule-based checks (a campaign can narrow
+  the profile, never contradict it), shown with where each rule came from.
+- Prospects one by one or by CSV: column auto-mapping, normalised domains, duplicate detection,
+  per-row problems previewed before saving.
+- Identity check with proof: contact moved, same-name candidates, a name that can't be confirmed
+  (the run pauses with suggestions of people who do work there), company-only input with suggested
+  contacts. A pinned contact resumes the run.
+- The bounded research loop: plan, search, read, quote-check, reflect, follow up, with hard budgets
+  per tier (Quick 0 follow-up rounds / 8 searches / 10 pages; Standard 2 / 20 / 25; Deep 4 / 40 /
+  50).
+- Search: Tavily, Exa and DuckDuckGo merged by reciprocal rank fusion, cached, with monthly spend
+  tracked per engine. Page fetching with trafilatura, htmldate and extruct, `robots.txt` respected,
+  Jina Reader as a fallback.
+- Evidence ledger: exact quote, URL, dates, entity match, source type, sensitivity; quotes verified
+  by code.
+- Verification: quote check, entailment by a separate checker model, recency windows, source
+  quality, entity match, sensitivity veto.
+- Hook scoring on six dimensions, sampled twice and averaged, seller weights, a 3.0 minimum bar
+  (`LOW_SIGNAL` below it), alternates kept.
+- Best-of-2 drafting, then a sentence-by-sentence fact-check with up to two revisions, plus
+  code-checked draft rules (length, banned phrases, never-claims, greeting by first name, no
+  present-tense words on stale news). Today's date and each source's date are given to the writer
+  and checker.
+- Human review: approve, edit (re-checked against the rules), reject with a reason; keyboard
+  shortcuts A, E, X.
+- Live stage view over server-sent events; run history; dashboard; CSV export of approved drafts.
+- Edge cases verified on real people: contact moved, same-name people, unconfirmable name,
+  company-only, too little signal.
+- Access code, one Render service serving the built React app, Neon Postgres (Singapore), SQLite
+  locally.
+
+### 17.2 Added during the build (not in the plan)
+
+- **Free model chains per job** (writer, judge, checker, reader) across Groq and Gemini, with
+  Mistral optional: up to ten models per job, each on its own free allowance, with cooldowns and a
+  corrective retry for broken JSON.
+- **Bring your own model**: a Models page to save keys (encrypted with Fernet from
+  `SETTINGS_SECRET`, never returned) for Anthropic, OpenAI, Gemini, Groq, OpenRouter or any
+  OpenAI-compatible endpoint, and to choose a provider and model per job. The free chain stays
+  behind as backup.
+- **Claude Code on this computer** as a local-only provider (`CLAUDE_CODE_LOCAL`), run with every
+  tool disabled in an empty folder. Never offered on a server.
+- **Finding the contact's email**: only when the rep gave none and a draft was written; first the
+  person's own address on pages already read, then Hunter's email finder (addresses their owner
+  asked Hunter not to share are never used). The source is shown next to the address.
+- **Send it yourself**: copy the email, open it in Gmail's compose window with the address, subject
+  and body filled in, or find the person on LinkedIn. Lede still sends nothing.
+- **Dashboard rework**: "Needs you" (drafts to review, contacts to choose, runs to retry), a
+  research-to-approval pipeline, outcome breakdown, free-allowance use (Tavily, Exa, Hunter).
+  Campaign cards with progress; campaign page filters and one next step per prospect.
+- **Delete a campaign** with its prospects and runs (refused while a run is going).
+- **Optional access-code hint** on the login page for a public demo (`SHOW_ACCESS_CODE`).
+
+### 17.3 Planned but not built
+
+| Planned (§16) | Status | Why it matters little for the prototype |
+|---|---|---|
+| Replay mode and badge | Not built | The search cache makes re-runs cheap; nothing is presented as live that isn't. |
+| Swap hook and Regenerate in review | Not built | The rep can edit, or re-run the prospect; alternates are shown in the scoreboard. |
+| First-party connectors (company sitemap and RSS, Google News RSS, Greenhouse/Lever/Ashby, SEC EDGAR, podcasts, YouTube, GitHub) | Not built | General search plus page reading finds these pages; job-board and filing domains are recognised for source quality. |
+| GitHub Models as a third provider | Not built | More Gemini and Groq models cover capacity instead. |
+| Deep-tier gap sub-agents | Not built | Deep runs the same loop with larger budgets. |
+| LLM consistency check on profile + campaign | Not built | Rule-based merge checks only. |
+| `llm_calls` table (prompt, tokens, latency per call) | Not built | Each draft records which model wrote it; prompts carry versions (`writer-v4`, `judging-v4`, `identity-v4`, `research-v1`). |
+| Eval script with an LLM rubric judge | Not built | Quality was compared by hand on real prospects (free models vs Claude). |
+| CSV two-pass triage, batch sameness check | Not built | Each prospect is run individually. |
+| Do-not-contact list, per-visitor rate limit | Not built | One shared demo workspace behind an access code. |
+| Full page text stored for later | Not built | Quotes are checked at fetch time and stored with the evidence. |
+| Token usage on the dashboard | Not built | The dashboard shows search and email-finder allowances. |
+
+### 17.4 Stack as built
+
+Python 3.12, FastAPI, Pydantic 2, SQLAlchemy 2 (async; psycopg for Postgres, aiosqlite locally),
+sse-starlette, httpx; trafilatura, htmldate, extruct, rank-bm25, rapidfuzz; `openai` SDK for every
+OpenAI-compatible provider, `anthropic` SDK for Claude, the `claude` CLI for local Claude Code. No
+Instructor, DBOS, Langfuse or Supabase. React 19, TypeScript, Vite, Tailwind 4, shadcn/ui,
+TanStack Query. Docker on Render (Singapore, free plan), Neon Postgres (Singapore, free plan),
+an uptime monitor pinging `/api/health` to keep the free service awake.
+
+### 17.5 Tests
+
+212 backend tests at the agreed seams ([backend/tests/README.md](backend/tests/README.md)), with
+mypy and ruff; the web app is type-checked, linted, format-checked and built. A pre-commit hook runs
+the checks for the parts a commit touches.
