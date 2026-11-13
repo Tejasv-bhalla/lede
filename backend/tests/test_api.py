@@ -36,7 +36,7 @@ async def client(tmp_path, world) -> AsyncIterator[httpx.AsyncClient]:
     store = Store(f"sqlite:///{tmp_path / 'test.db'}")
     await store.create_all()
     app = create_app(
-        Settings(demo_access_code=SecretStr(CODE)),
+        Settings(_env_file=None, demo_access_code=SecretStr(CODE)),
         store=store,
         deps_factory=lambda tier: world["deps"](),
         today=lambda: TODAY,
@@ -396,7 +396,7 @@ async def test_export_is_a_csv_of_approved_drafts_with_the_seller_footer(client)
 
 async def test_health_check_is_public_and_never_touches_the_database(tmp_path):
     store = Store(f"sqlite:///{tmp_path / 'never-created.db'}")  # tables never created
-    app = create_app(Settings(demo_access_code=SecretStr(CODE)), store=store)
+    app = create_app(Settings(_env_file=None, demo_access_code=SecretStr(CODE)), store=store)
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as c:
