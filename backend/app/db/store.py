@@ -104,6 +104,9 @@ class RunRow(Base):
             "state": self.state,
             "review_state": self.review_state,
             "prospect": self.inputs["prospect"],
+            # Who the email is to: the contact the rep picked after a pause, else the prospect.
+            "contact_name": (self.inputs.get("pinned_identity") or {}).get("person_name")
+            or self.inputs["prospect"].get("person_name"),
             "created_at": _utc(self.created_at).isoformat(),
             "finished_at": _utc(self.finished_at).isoformat() if self.finished_at else None,
         }

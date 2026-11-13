@@ -373,6 +373,22 @@ async def test_a_paused_run_is_resumed_with_the_contact_the_rep_picked(client, w
     assert (await events_of(client, resumed))[-1]["summary"] == "DRAFT_READY"
 
 
+async def test_run_lists_name_the_person_written_to_even_when_the_rep_picked_them(client, world):
+    cid = await new_campaign(client)
+    await client.put("/api/profile", json=PROFILE, headers=AUTH)
+    pid = (
+        await client.post(
+            f"/api/campaigns/{cid}/prospects", json={"company_name": "Acme"}, headers=AUTH
+        )
+    ).json()["id"]
+    picked = {"company_name": "Acme", "person_name": "Priya Shah", "title": "VP Finance"}
+    run_id = await start_run(client, prospect_id=pid, tier="standard", pinned_identity=picked)
+    await events_of(client, run_id)
+
+    listed = (await client.get("/api/runs", headers=AUTH)).json()
+    assert listed[0]["contact_name"] == "Priya Shah"
+
+
 async def test_starting_a_run_needs_a_known_prospect_and_a_seller_profile(client):
     r = await client.post("/api/runs", json={"prospect_id": 999, "tier": "quick"}, headers=AUTH)
     assert r.status_code == 404
