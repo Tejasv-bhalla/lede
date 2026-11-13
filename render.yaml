@@ -16,6 +16,8 @@ services:
         sync: false
       - key: SETTINGS_SECRET # encrypts model keys saved in the app
         generateValue: true
+      - key: SHOW_ACCESS_CODE # "true" shows the code on the login page (public demo); remove to hide
+        value: "true"
       # Free AI models (at least one; more = more backup when one is busy)
       - key: GROQ_API_KEY
         sync: false
