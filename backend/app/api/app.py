@@ -33,6 +33,9 @@ from app.db.store import Store
 from app.domain.models import Campaign, ProspectInput, RunState, SellerProfile, Tier
 from app.pipeline.ports import Contact, Draft
 from app.pipeline.run import PipelineDeps
+from app.providers.catalogue import ProviderId
+from app.providers.llm_roles import Role
+from app.services.models import Choice, ModelService, NeedsSecret, NoKey
 from app.services.runs import DraftRejected, NotFound, NotReady, ReviewAction, RunService
 
 MAX_CSV_BYTES = 1_000_000
@@ -350,11 +353,66 @@ async def export_csv(store: StoreDep, campaign_id: str | None = None) -> Respons
     )
 
 
+# ── model settings ────────────────────────────────────────────────────────────
+
+
+class KeyIn(BaseModel):
+    api_key: str = ""
+    base_url: str | None = None
+
+
+def _models(request: Request) -> ModelService:
+    models: ModelService | None = request.app.state.models
+    if models is None:
+        raise HTTPException(503, "Model settings are not available on this server.")
+    return models
+
+
+ModelsDep = Annotated[ModelService, Depends(_models)]
+
+
+@api.get("/models")
+async def get_models(models: ModelsDep) -> dict[str, Any]:
+    return models.view()
+
+
+@api.put("/models/keys/{provider}")
+async def put_model_key(provider: ProviderId, body: KeyIn, models: ModelsDep) -> dict[str, Any]:
+    try:
+        await models.save_key(provider, body.api_key, body.base_url)
+    except NeedsSecret as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return models.view()
+
+
+@api.delete("/models/keys/{provider}")
+async def delete_model_key(provider: ProviderId, models: ModelsDep) -> dict[str, Any]:
+    await models.delete_key(provider)
+    return models.view()
+
+
+@api.put("/models/roles")
+async def put_model_roles(body: dict[Role, Choice | None], models: ModelsDep) -> dict[str, Any]:
+    try:
+        await models.choose(body)
+    except NoKey as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return models.view()
+
+
+@api.post("/models/test")
+async def test_model(body: Choice, models: ModelsDep) -> dict[str, Any]:
+    return asdict(await models.test(body.provider, body.model))
+
+
 def create_app(
     settings: Settings,
     *,
     store: Store,
     deps_factory: Callable[[Tier], PipelineDeps] | None = None,
+    models: ModelService | None = None,
     today: Callable[[], date] = date.today,
     lifespan: Lifespan | None = None,
 ) -> FastAPI:
@@ -362,6 +420,7 @@ def create_app(
     app.state.settings = settings
     app.state.store = store
     app.state.runs = RunService(store, deps_factory, today) if deps_factory else None
+    app.state.models = models
     app.include_router(public)
     app.include_router(api)
     return app

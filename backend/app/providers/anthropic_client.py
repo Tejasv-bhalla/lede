@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from app.providers.model_client import Message, Overloaded, RateLimited, Rejected, Reply
 
 MAX_TOKENS = 16_000  # room for adaptive thinking plus the JSON answer
+TIMEOUT_S = 120.0  # thinking takes longer than the free models' typical reply
 
 
 class AnthropicClient:
@@ -25,7 +26,11 @@ class AnthropicClient:
         http_client: httpx2.AsyncClient | None = None,
     ) -> None:
         self._client = anthropic.AsyncAnthropic(
-            api_key=api_key, base_url=base_url, max_retries=0, http_client=http_client
+            api_key=api_key,
+            base_url=base_url,
+            max_retries=0,
+            timeout=TIMEOUT_S,
+            http_client=http_client,
         )
 
     async def reply(

@@ -112,6 +112,15 @@ class EngineSpendRow(Base):
     spent: Mapped[float] = mapped_column(Float, default=0.0)
 
 
+class SettingRow(Base):
+    """Small named settings documents, e.g. the model choices."""
+
+    __tablename__ = "setting"
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    data: Mapped[dict[str, Any]] = mapped_column(Json)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class Store:
     def __init__(self, url: str) -> None:
         self._engine = create_async_engine(async_url(url))
@@ -143,6 +152,21 @@ class Store:
                 return 1
             row.data, row.version, row.updated_at = data, row.version + 1, _now()
             return row.version
+
+    # ── named settings ────────────────────────────────────────────────────────
+
+    async def get_setting(self, key: str) -> dict[str, Any] | None:
+        async with self.session() as s:
+            row = await s.get(SettingRow, key)
+            return row.data if row else None
+
+    async def put_setting(self, key: str, data: dict[str, Any]) -> None:
+        async with self.session() as s, s.begin():
+            row = await s.get(SettingRow, key)
+            if row is None:
+                s.add(SettingRow(key=key, data=data))
+            else:
+                row.data, row.updated_at = data, _now()
 
     # ── campaigns ─────────────────────────────────────────────────────────────
 

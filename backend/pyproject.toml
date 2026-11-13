@@ -26,6 +26,7 @@ dependencies = [
     "python-multipart>=0.0.12",
     "aiosqlite>=0.20",
     "anthropic>=1",
+    "cryptography>=44",
 ]
 
 [dependency-groups]

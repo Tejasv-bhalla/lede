@@ -38,6 +38,9 @@ class Settings(BaseSettings):
 
     # App
     demo_access_code: SecretStr | None = None
+    # Encrypts model API keys that users save in the app. Any long random string; changing it
+    # makes saved keys unreadable (they must be entered again).
+    settings_secret: SecretStr | None = None
     sec_contact_email: str | None = None
     http_timeout_s: float = 10.0
     user_agent: str = "Lede/0.1 (research prototype)"
