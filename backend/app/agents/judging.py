@@ -20,7 +20,7 @@ from app.pipeline.hooks import DimensionScores
 from app.pipeline.ports import ClaimVerdict, Draft, DraftRequest
 from app.providers.llm_router import LLMRouter
 
-PROMPT_VERSION = "judging-v2"
+PROMPT_VERSION = "judging-v3"
 
 
 BATCH = 12  # items per call: one call covers a Standard shortlist; instructions sent once
@@ -36,11 +36,18 @@ class LLMEntailment:
     def __init__(self, router: LLMRouter) -> None:
         self._router = router
 
-    async def entails(self, items: Sequence[Evidence]) -> list[Entailment]:
+    async def entails(self, items: Sequence[Evidence]) -> list[Entailment | None]:
         parts = await asyncio.gather(*(self._batch(chunk) for chunk in _chunks(items)))
         return [v for part in parts for v in part]
 
-    async def _batch(self, items: Sequence[Evidence]) -> list[Entailment]:
+    async def _batch(self, items: Sequence[Evidence]) -> list[Entailment | None]:
+        verdicts = await self._ask(items)
+        missing = [e for e in items if e.id not in verdicts]
+        if missing:  # the model skipped some: ask once more for just those
+            verdicts |= await self._ask(missing)
+        return [verdicts.get(e.id) for e in items]
+
+    async def _ask(self, items: Sequence[Evidence]) -> dict[str, Entailment]:
         listed = "\n".join(
             f'[{e.id}] CLAIM: {e.claim}\n      QUOTE: "{e.verbatim_quote}"' for e in items
         )
@@ -53,11 +60,9 @@ its own quote, not from the other items or anything you know.
 - "partial": the quote supports part of it, but the claim adds something (a number, a date, a
   cause, an exaggeration).
 - "unsupported": the quote doesn't say this.
-Answer for every id."""
+Answer for every id, using the id exactly as written (e.g. "{items[0].id}")."""
         out = (await self._router.structured("checker", prompt, EntailmentBatchOut)).value
-        verdicts = {v.id.strip("[] "): v.verdict for v in out.verdicts}
-        # An item the model skipped is not trusted as a hook.
-        return [verdicts.get(e.id, Entailment.UNSUPPORTED) for e in items]
+        return {normalise_id(v.id): v.verdict for v in out.verdicts}
 
 
 class LLMScorer:
@@ -79,6 +84,13 @@ class LLMScorer:
         )
 
     async def _batch(self, items: Sequence[Evidence], brief: MergedBrief) -> list[DimensionScores]:
+        scored = await self._ask(items, brief)
+        missing = [e for e in items if e.id not in scored]
+        if missing:  # the model skipped some: ask once more for just those
+            scored |= await self._ask(missing, brief)
+        return [_dimensions(scored.get(e.id)) for e in items]
+
+    async def _ask(self, items: Sequence[Evidence], brief: MergedBrief) -> dict[str, HookScoreOut]:
         persona = brief.persona
         facts = "\n".join(self._fact(e, brief) for e in items)
         prompt = f"""Score each fact as the opening hook of a cold email. Be strict: 3 is ordinary,
@@ -103,8 +115,13 @@ For every id, score each dimension from 1 to 5, then give ONE short reason for t
   reputable press = 4; job boards = 3; aggregators or unknown blogs = 1-2.
 - closeness: did the person do/say it (5), their team (4), or just the company (2-3)?"""
         out = (await self._router.structured("judge", prompt, HookScoreBatchOut)).value
-        by_id = {item.id.strip("[] "): item for item in out.items}
-        return [_dimensions(by_id.get(e.id)) for e in items]
+        return {normalise_id(item.id): item for item in out.items}
+
+
+def normalise_id(raw: str) -> str:
+    """Models write ids as "e2", "[e2]", "E2" or just "2"; all mean evidence e2."""
+    cleaned = raw.strip().strip("[]()").strip().lower()
+    return f"e{cleaned}" if cleaned.isdigit() else cleaned
 
 
 def _dimensions(item: HookScoreOut | None) -> DimensionScores:

@@ -23,7 +23,7 @@ from app.pipeline.run import PipelineDeps, StageEvent, run_prospect
 from app.policy.draft_rules import DraftRules
 from app.providers.llm_router import LLMUnavailable
 from app.research.ports import Candidate, Page
-from tests.fakes import FakeFactChecker, FakeWriter
+from tests.fakes import FakeEntailment, FakeFactChecker, FakeWriter
 from tests.scenario import (
     CAREERS,
     GOOD_DRAFT,
@@ -578,3 +578,15 @@ async def test_when_one_draft_variant_cannot_be_written_the_other_is_used():
     outcome = await run(d)
     assert outcome.state is RunState.DRAFT_READY
     assert outcome.draft == GOOD_DRAFT
+
+
+async def test_a_fact_the_checker_could_not_judge_is_not_treated_as_false():
+    d = replace(
+        deps(scores={PODCAST_QUOTE.claim: 4.5, HIRING.claim: 3.5}),
+        entailment=FakeEntailment(unjudged=(PODCAST_QUOTE.claim,)),
+    )
+    outcome = await run(d)
+
+    assert outcome.state is RunState.DRAFT_READY
+    assert d.writer.requests[0].hook.evidence.claim == PODCAST_QUOTE.claim  # type: ignore[attr-defined]
+    assert outcome.ranking is not None and not outcome.ranking.vetoed

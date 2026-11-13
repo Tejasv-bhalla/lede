@@ -87,14 +87,19 @@ class FakeResolver:
 
 
 class FakeEntailment:
-    """Supported unless the claim is listed as unsupported."""
+    """Supported unless the claim is listed as unsupported, or left unjudged (None)."""
 
-    def __init__(self, unsupported: Iterable[str] = ()):
+    def __init__(self, unsupported: Iterable[str] = (), unjudged: Iterable[str] = ()):
         self.unsupported = set(unsupported)
+        self.unjudged = set(unjudged)
 
-    async def entails(self, items: Sequence[Evidence]) -> list[Entailment]:
+    async def entails(self, items: Sequence[Evidence]) -> list[Entailment | None]:
         return [
-            Entailment.UNSUPPORTED if e.claim in self.unsupported else Entailment.SUPPORTED
+            None
+            if e.claim in self.unjudged
+            else Entailment.UNSUPPORTED
+            if e.claim in self.unsupported
+            else Entailment.SUPPORTED
             for e in items
         ]
 

@@ -79,8 +79,9 @@ class Resolver(Protocol):
 
 
 class EntailmentChecker(Protocol):
-    async def entails(self, items: Sequence[Evidence]) -> list[Entailment]:
-        """One verdict per item, in order. Batched: free tiers limit calls, not items."""
+    async def entails(self, items: Sequence[Evidence]) -> list[Entailment | None]:
+        """One verdict per item, in order; None when the model gave no verdict for an item (not
+        judged is not the same as false). Batched: free tiers limit calls, not items."""
         ...
 
 
