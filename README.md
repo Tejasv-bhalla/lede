@@ -51,6 +51,23 @@ One real run from the command line (uses the sample seller in `backend/samples/`
 cd backend && uv run python -m scripts.try_run --company Ramp --person "Eric Glyman" --title CEO
 ```
 
+## Deploy
+
+One container serves the web app and the API on the same address (`Dockerfile`). The repo
+includes a Render blueprint (`render.yaml`: Docker, Singapore, free plan) and works with any
+Postgres; Neon's free tier is the tested choice.
+
+1. Create a Neon project and copy its connection string (`postgresql://…?sslmode=require`).
+2. In Render: **New → Blueprint**, pick this repo, and fill in the secrets it asks for:
+   `DATABASE_URL`, `DEMO_ACCESS_CODE`, and the same API keys as your `.env`.
+   `SETTINGS_SECRET` is generated for you.
+3. Render's free plan sleeps after 15 idle minutes; an uptime monitor calling `/api/health`
+   every 10 minutes keeps it awake (that endpoint never touches the database).
+
+Never set `CLAUDE_CODE_LOCAL` on a server: it is for local demos on your own computer only.
+
+Try the container locally: `docker build -t lede . && docker run -p 8000:8000 --env-file .env lede`.
+
 ## Development conventions
 
 - **Test-driven:** red → green, one behaviour at a time, tests only at the agreed seams.

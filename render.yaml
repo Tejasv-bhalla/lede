@@ -1,0 +1,40 @@
+# Render blueprint: New > Blueprint > pick this repo. Secrets marked sync: false are asked for
+# once in the Render dashboard and never stored in the repo.
+services:
+  - type: web
+    name: lede
+    runtime: docker
+    region: singapore
+    plan: free
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      # Required
+      - key: DATABASE_URL # Neon connection string (postgresql://...?sslmode=require)
+        sync: false
+      - key: DEMO_ACCESS_CODE # the code testers type to open the app
+        sync: false
+      - key: SETTINGS_SECRET # encrypts model keys saved in the app
+        generateValue: true
+      # Free AI models (at least one; more = more backup when one is busy)
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: MISTRAL_API_KEY
+        sync: false
+      - key: GITHUB_TOKEN
+        sync: false
+      # Search and reading
+      - key: TAVILY_API_KEY
+        sync: false
+      - key: EXA_API_KEY
+        sync: false
+      - key: JINA_API_KEY
+        sync: false
+      - key: SEC_CONTACT_EMAIL
+        sync: false
+      # Email finder
+      - key: HUNTER_API_KEY
+        sync: false
+      # Never set CLAUDE_CODE_LOCAL here: it is for local demos on your own computer only.

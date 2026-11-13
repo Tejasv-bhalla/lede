@@ -1,0 +1,16 @@
+# Keep secrets, local data and build output out of the image.
+.env
+.env.*
+!.env.example
+**/*.db
+**/*.sqlite3
+backend/samples/
+backend/evals/
+backend/tests/
+backend/.venv/
+**/__pycache__/
+web/node_modules/
+web/dist/
+.git/
+.gstack/
+*.md
