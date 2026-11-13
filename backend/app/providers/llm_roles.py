@@ -45,9 +45,14 @@ ROLE_CHAINS: dict[Role, list[tuple[str, str]]] = {
         ("groq", "qwen/qwen3.8-27b"),
         ("mistral", "mistral-small-latest"),
     ],
-    "checker": [  # a different model family from the writer's usual models
+    "checker": [  # checks quotes and drafts; ideally a different family from the writer
         ("groq", "qwen/qwen3.8-27b"),
         ("gemini", "gemini-3.5-flash-lite"),
+        # Backups on separate free allowances: with only two models, both resting at once
+        # failed a whole run (13 Nov 2026).
+        ("groq", "openai/gpt-oss-20b"),
+        ("groq", "openai/gpt-oss-120b"),
+        ("gemini", "gemini-3.8-flash"),
         ("mistral", "mistral-small-latest"),
     ],
 }
