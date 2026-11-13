@@ -11,6 +11,7 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import asdict
 from datetime import UTC, date, datetime
+from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import (
@@ -23,6 +24,8 @@ from fastapi import (
     Response,
     UploadFile,
 )
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, model_validator
 from sse_starlette import EventSourceResponse
 
@@ -463,6 +466,7 @@ def create_app(
     models: ModelService | None = None,
     today: Callable[[], date] = date.today,
     lifespan: Lifespan | None = None,
+    static_dir: Path | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Lede", version="0.1.0", lifespan=lifespan)
     app.state.settings = settings
@@ -471,4 +475,22 @@ def create_app(
     app.state.models = models
     app.include_router(public)
     app.include_router(api)
+    if static_dir is not None and (static_dir / "index.html").is_file():
+        _serve_web_app(app, static_dir)
     return app
+
+
+def _serve_web_app(app: FastAPI, site: Path) -> None:
+    """Serve the built React app from the same origin: files as they are, and every other
+    non-API path as index.html so the browser router can open deep links."""
+    app.mount("/assets", StaticFiles(directory=site / "assets"), name="assets")
+    index = site / "index.html"
+
+    @app.get("/{path:path}", include_in_schema=False)
+    async def web_app(path: str) -> FileResponse:
+        if path == "api" or path.startswith("api/"):
+            raise HTTPException(404, "Not found.")
+        file = (site / path).resolve()
+        if path and file.is_file() and file.is_relative_to(site.resolve()):
+            return FileResponse(file)  # e.g. favicon.svg
+        return FileResponse(index)

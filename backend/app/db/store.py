@@ -137,7 +137,15 @@ class SettingRow(Base):
 
 class Store:
     def __init__(self, url: str) -> None:
-        self._engine = create_async_engine(async_url(url))
+        url = async_url(url)
+        if url.startswith("postgresql"):
+            # Hosted Postgres (Neon) pauses when idle and pools connections: check each one
+            # before use, and skip server-side prepared statements, which poolers drop.
+            self._engine = create_async_engine(
+                url, pool_pre_ping=True, connect_args={"prepare_threshold": None}
+            )
+        else:
+            self._engine = create_async_engine(url)
         self._session = async_sessionmaker(self._engine, expire_on_commit=False)
 
     async def create_all(self) -> None:

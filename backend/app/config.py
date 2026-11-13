@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     database_url: str = f"sqlite:///{PROJECT_ROOT / 'backend' / 'local.db'}"
 
     # App
+    web_dist_dir: Path = PROJECT_ROOT / "web" / "dist"  # the built React app, served at /
     demo_access_code: SecretStr | None = None
     # Encrypts model API keys that users save in the app. Any long random string; changing it
     # makes saved keys unreadable (they must be entered again).

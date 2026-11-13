@@ -579,3 +579,32 @@ async def test_run_times_are_sent_as_explicit_utc(client):
     run = (await client.get(f"/api/runs/{run_id}", headers=AUTH)).json()
     for stamp in (run["created_at"], run["finished_at"]):
         assert stamp.endswith("+00:00"), stamp
+
+
+# ── serving the web app from the same server ─────────────────────────────────
+
+
+async def test_the_built_web_app_is_served_and_its_routes_open_the_app(tmp_path):
+    site = tmp_path / "dist"
+    (site / "assets").mkdir(parents=True)
+    (site / "index.html").write_text("<html>Lede app</html>")
+    (site / "assets" / "app.js").write_text("console.log('lede')")
+    store = Store(f"sqlite:///{tmp_path / 'web.db'}")
+    await store.create_all()
+    app = create_app(
+        Settings(_env_file=None, demo_access_code=SecretStr(CODE)), store=store, static_dir=site
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as c:
+        home = await c.get("/")
+        deep_link = await c.get("/campaigns/abc123")  # the browser router handles this one
+        asset = await c.get("/assets/app.js")
+        api = await c.get("/api/health")
+        unknown_api = await c.get("/api/nope", headers=AUTH)
+    await store.dispose()
+
+    assert "Lede app" in home.text and "Lede app" in deep_link.text
+    assert asset.text == "console.log('lede')"
+    assert api.json()["ok"] is True
+    assert unknown_api.status_code == 404 and "Lede app" not in unknown_api.text

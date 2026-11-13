@@ -40,6 +40,7 @@ def build() -> FastAPI:
         deps_factory=runtime.deps if runtime.ready else None,
         models=models,
         lifespan=lifespan,
+        static_dir=settings.web_dist_dir,
     )
 
 
