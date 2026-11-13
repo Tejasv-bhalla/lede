@@ -84,29 +84,26 @@ class RunOutcome:
     notes: list[str] = field(default_factory=list)
 
 
-async def _verify(ledger: list[Evidence], checker: EntailmentChecker) -> list[Evidence]:
-    """S4: ask whether each hook-eligible item's quote supports its claim (one call per item)."""
-    eligible = [e for e in ledger if veto_reason(e) is None]
-    verdicts = await asyncio.gather(*(checker.entails(e) for e in eligible))
+async def _verify(
+    ledger: list[Evidence], shortlist: list[Evidence], checker: EntailmentChecker
+) -> list[Evidence]:
+    """S4: ask whether each shortlisted item's quote supports its claim (one batched call)."""
+    verdicts = await checker.entails(shortlist) if shortlist else []
     checked = {
         e.id: e.model_copy(update={"entailment": v})
-        for e, v in zip(eligible, verdicts, strict=True)
+        for e, v in zip(shortlist, verdicts, strict=True)
     }
     return [checked.get(e.id, e) for e in ledger]
 
 
 async def _score(
-    ledger: list[Evidence], scorer: HookScorer, brief: MergedBrief
+    items: list[Evidence], scorer: HookScorer, brief: MergedBrief
 ) -> dict[str, list[DimensionScores]]:
-    """S5: score each veto-free item SCORE_SAMPLES times; rank_hooks averages the samples."""
-    eligible = [e for e in ledger if veto_reason(e) is None]
-    results = await asyncio.gather(
-        *(scorer.score(e, brief) for e in eligible for _ in range(SCORE_SAMPLES))
-    )
-    return {
-        e.id: list(results[i * SCORE_SAMPLES : (i + 1) * SCORE_SAMPLES])
-        for i, e in enumerate(eligible)
-    }
+    """S5: SCORE_SAMPLES independent batched samples; rank_hooks averages them per item."""
+    if not items:
+        return {}
+    samples = await asyncio.gather(*(scorer.score(items, brief) for _ in range(SCORE_SAMPLES)))
+    return {e.id: [sample[i] for sample in samples] for i, e in enumerate(items)}
 
 
 def _preflight(prospect: ProspectInput, brief: MergedBrief) -> list[str]:
@@ -276,14 +273,14 @@ async def _stages(
     )
 
     events.started("verify")
-    ledger = research.ledger = await _verify(research.ledger, deps.entailment)
+    shortlist = [e for e in research.ledger if veto_reason(e) is None]
+    ledger = research.ledger = await _verify(research.ledger, shortlist, deps.entailment)
     unsupported = sum(e.entailment is Entailment.UNSUPPORTED for e in ledger)
-    events.done(
-        f"{sum(e.entailment is not None for e in ledger)} checked, {unsupported} unsupported"
-    )
+    events.done(f"{len(shortlist)} checked, {unsupported} unsupported")
 
     events.started("score")
-    samples = await _score(ledger, deps.scorer, brief)
+    eligible = [e for e in ledger if veto_reason(e) is None]
+    samples = await _score(eligible, deps.scorer, brief)
     ranking = outcome.ranking = rank_hooks(ledger, samples, weights=brief.hook_weights)
     events.done(
         f"top hook {ranking.ranked[0].total:.2f}: {ranking.ranked[0].evidence.claim}"

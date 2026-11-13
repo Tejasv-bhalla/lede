@@ -79,11 +79,16 @@ class Resolver(Protocol):
 
 
 class EntailmentChecker(Protocol):
-    async def entails(self, evidence: Evidence) -> Entailment: ...
+    async def entails(self, items: Sequence[Evidence]) -> list[Entailment]:
+        """One verdict per item, in order. Batched: free tiers limit calls, not items."""
+        ...
 
 
 class HookScorer(Protocol):
-    async def score(self, evidence: Evidence, brief: MergedBrief) -> DimensionScores: ...
+    async def score(self, items: Sequence[Evidence], brief: MergedBrief) -> list[DimensionScores]:
+        """One independent sample of scores per item, in order. Seeing the candidates side by
+        side also keeps the scale consistent across them."""
+        ...
 
 
 class Writer(Protocol):

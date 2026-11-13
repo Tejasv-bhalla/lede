@@ -3,10 +3,16 @@ sentence of a draft backed by evidence (S7)."""
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import asyncio
+from collections.abc import Callable, Sequence
 from datetime import date
 
-from app.agents.schemas import EntailmentOut, FactCheckOut, HookScoreOut
+from app.agents.schemas import (
+    EntailmentBatchOut,
+    FactCheckOut,
+    HookScoreBatchOut,
+    HookScoreOut,
+)
 from app.context.merge import MergedBrief
 from app.domain.hook_dimensions import HOOK_DIMENSIONS
 from app.domain.models import Entailment, Evidence
@@ -17,52 +23,77 @@ from app.providers.llm_router import LLMRouter
 PROMPT_VERSION = "judging-v1"
 
 
+BATCH = 8  # items per call: small enough for careful judgement, large enough to save quota
+
+
+def _chunks[T](items: Sequence[T]) -> list[Sequence[T]]:
+    return [items[i : i + BATCH] for i in range(0, len(items), BATCH)]
+
+
 class LLMEntailment:
-    """Uses the checker role: a different model family from the reader that wrote the claim."""
+    """Uses the checker role: a different model family from the reader that wrote the claims."""
 
     def __init__(self, router: LLMRouter) -> None:
         self._router = router
 
-    async def entails(self, evidence: Evidence) -> Entailment:
-        prompt = f"""Does the QUOTE fully support the CLAIM? Judge only from the quote, not from
-anything you know.
+    async def entails(self, items: Sequence[Evidence]) -> list[Entailment]:
+        parts = await asyncio.gather(*(self._batch(chunk) for chunk in _chunks(items)))
+        return [v for part in parts for v in part]
 
-CLAIM: {evidence.claim}
-QUOTE: "{evidence.verbatim_quote}"
-(Source: {evidence.url})
+    async def _batch(self, items: Sequence[Evidence]) -> list[Entailment]:
+        listed = "\n".join(
+            f'[{e.id}] CLAIM: {e.claim}\n      QUOTE: "{e.verbatim_quote}"' for e in items
+        )
+        prompt = f"""For each item, does the QUOTE fully support the CLAIM? Judge each one only from
+its own quote, not from the other items or anything you know.
+
+{listed}
 
 - "supported": everything the claim says is stated in the quote.
 - "partial": the quote supports part of it, but the claim adds something (a number, a date, a
   cause, an exaggeration).
-- "unsupported": the quote doesn't say this."""
-        out = await self._router.structured("checker", prompt, EntailmentOut)
-        return out.value.verdict
+- "unsupported": the quote doesn't say this.
+Answer for every id."""
+        out = (await self._router.structured("checker", prompt, EntailmentBatchOut)).value
+        verdicts = {v.id.strip("[] "): v.verdict for v in out.verdicts}
+        # An item the model skipped is not trusted as a hook.
+        return [verdicts.get(e.id, Entailment.UNSUPPORTED) for e in items]
 
 
 class LLMScorer:
     def __init__(self, router: LLMRouter, today: Callable[[], date] = date.today) -> None:
         self._router, self._today = router, today
 
-    async def score(self, evidence: Evidence, brief: MergedBrief) -> DimensionScores:
-        persona = brief.persona
-        when = evidence.event_date or evidence.published_at
+    async def score(self, items: Sequence[Evidence], brief: MergedBrief) -> list[DimensionScores]:
+        parts = await asyncio.gather(*(self._batch(chunk, brief) for chunk in _chunks(items)))
+        return [s for part in parts for s in part]
+
+    def _fact(self, e: Evidence, brief: MergedBrief) -> str:
+        when = e.event_date or e.published_at
         age = f"{(self._today() - when).days} days ago" if when else "undated"
-        prompt = f"""Score one fact as the opening hook of a cold email. Be strict: 3 is ordinary,
-5 is rare.
+        priority = brief.signal_priorities.get(e.category, "not set")
+        return (
+            f"[{e.id}] ({e.category.value}, about the {e.about.value}; campaign priority "
+            f'{priority}) {e.claim}\n      quote: "{e.verbatim_quote}"\n      source: {e.url} '
+            f"({e.source_type.value}); happened/published {age}"
+        )
+
+    async def _batch(self, items: Sequence[Evidence], brief: MergedBrief) -> list[DimensionScores]:
+        persona = brief.persona
+        facts = "\n".join(self._fact(e, brief) for e in items)
+        prompt = f"""Score each fact as the opening hook of a cold email. Be strict: 3 is ordinary,
+5 is rare. Use the same scale across all facts.
 
 Seller's objective: {brief.objective}
 Problems the seller solves: {"; ".join(brief.pains) or "not stated"}
 Recipient persona: {persona.title_patterns if persona else "unknown"}, seniority \
 {persona.seniority.value if persona else "unknown"}, prefers \
 {persona.hook_preference.value if persona else "company"}-level hooks.
-Campaign priority for this kind of signal: \
-{brief.signal_priorities.get(evidence.category, "not set")}
 
-FACT [{evidence.category.value}, about the {evidence.about.value}]: {evidence.claim}
-Quote: "{evidence.verbatim_quote}"
-Source: {evidence.url} ({evidence.source_type.value}); happened/published: {age}
+FACTS:
+{facts}
 
-Score each from 1 to 5 with a one-line reason:
+For every id, score each dimension from 1 to 5 with a one-line reason:
 - offer_relevance: can one honest sentence link this to a problem the seller solves?
 - specificity: is it about THIS person/company, not the industry? Would the email fail if
   sent to someone else?
@@ -71,12 +102,22 @@ Score each from 1 to 5 with a one-line reason:
 - source_strength: primary source (company site, filing, the person's own words) = 5;
   reputable press = 4; job boards = 3; aggregators or unknown blogs = 1-2.
 - closeness: did the person do/say it (5), their team (4), or just the company (2-3)?"""
-        out = (await self._router.structured("judge", prompt, HookScoreOut)).value
-        dims = {d: getattr(out, d) for d in HOOK_DIMENSIONS}
+        out = (await self._router.structured("judge", prompt, HookScoreBatchOut)).value
+        by_id = {item.id.strip("[] "): item for item in out.items}
+        return [_dimensions(by_id.get(e.id)) for e in items]
+
+
+def _dimensions(item: HookScoreOut | None) -> DimensionScores:
+    if item is None:  # the model skipped it: lowest scores, so it can't win by omission
         return DimensionScores(
-            scores={d: float(v.score) for d, v in dims.items()},
-            reasons={d: v.reason for d, v in dims.items()},
+            scores=dict.fromkeys(HOOK_DIMENSIONS, 1.0),
+            reasons=dict.fromkeys(HOOK_DIMENSIONS, "not scored"),
         )
+    dims = {d: getattr(item, d) for d in HOOK_DIMENSIONS}
+    return DimensionScores(
+        scores={d: float(v.score) for d, v in dims.items()},
+        reasons={d: v.reason for d, v in dims.items()},
+    )
 
 
 class LLMFactChecker:

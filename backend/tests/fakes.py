@@ -92,10 +92,11 @@ class FakeEntailment:
     def __init__(self, unsupported: Iterable[str] = ()):
         self.unsupported = set(unsupported)
 
-    async def entails(self, evidence: Evidence) -> Entailment:
-        if evidence.claim in self.unsupported:
-            return Entailment.UNSUPPORTED
-        return Entailment.SUPPORTED
+    async def entails(self, items: Sequence[Evidence]) -> list[Entailment]:
+        return [
+            Entailment.UNSUPPORTED if e.claim in self.unsupported else Entailment.SUPPORTED
+            for e in items
+        ]
 
 
 class FakeScorer:
@@ -108,7 +109,10 @@ class FakeScorer:
         self.by_claim = by_claim
         self.scored: list[str] = []
 
-    async def score(self, evidence: Evidence, brief: MergedBrief) -> DimensionScores:
+    async def score(self, items: Sequence[Evidence], brief: MergedBrief) -> list[DimensionScores]:
+        return [self._one(e) for e in items]
+
+    def _one(self, evidence: Evidence) -> DimensionScores:
         scripted = self.by_claim.get(evidence.claim, 2.0)
         value = (
             scripted[self.scored.count(evidence.claim) % len(scripted)]

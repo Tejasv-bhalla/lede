@@ -75,8 +75,13 @@ class SuggestionOut(_Out):
 
 
 class EntailmentOut(_Out):
+    id: str
     verdict: Entailment
     reason: str = ""
+
+
+class EntailmentBatchOut(_Out):
+    verdicts: list[EntailmentOut]
 
 
 class DimensionOut(_Out):
@@ -85,12 +90,17 @@ class DimensionOut(_Out):
 
 
 class HookScoreOut(_Out):
+    id: str
     offer_relevance: DimensionOut
     specificity: DimensionOut
     recency: DimensionOut
     persona_fit: DimensionOut
     source_strength: DimensionOut
     closeness: DimensionOut
+
+
+class HookScoreBatchOut(_Out):
+    items: list[HookScoreOut]
 
 
 class ClaimCheckOut(_Out):
