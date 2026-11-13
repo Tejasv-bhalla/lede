@@ -97,15 +97,23 @@ class FakeEntailment:
 
 
 class FakeScorer:
-    """Scores every dimension with the value given for the evidence's claim (default 2)."""
+    """Scores every dimension with the value given for the evidence's claim (default 2).
 
-    def __init__(self, by_claim: dict[str, float]):
+    A list of values is returned one per call, to script disagreeing samples.
+    """
+
+    def __init__(self, by_claim: dict[str, float | list[float]]):
         self.by_claim = by_claim
         self.scored: list[str] = []
 
     async def score(self, evidence: Evidence, brief: MergedBrief) -> DimensionScores:
+        scripted = self.by_claim.get(evidence.claim, 2.0)
+        value = (
+            scripted[self.scored.count(evidence.claim) % len(scripted)]
+            if isinstance(scripted, list)
+            else scripted
+        )
         self.scored.append(evidence.claim)
-        value = self.by_claim.get(evidence.claim, 2.0)
         return DimensionScores(
             scores=dict.fromkeys(HOOK_DIMENSIONS, value),
             reasons=dict.fromkeys(HOOK_DIMENSIONS, "scripted"),

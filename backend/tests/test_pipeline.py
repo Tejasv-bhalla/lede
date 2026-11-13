@@ -89,8 +89,9 @@ GOOD_DRAFT = Draft(
 
 def deps(
     *,
+    pages: dict[str, Page] = PAGES,
     identity: Identity | None = None,
-    scores: dict[str, float] | None = None,
+    scores: dict[str, float | list[float]] | None = None,
     candidates: dict[str, list[Candidate]] | None = None,
     drafts: tuple[Draft, ...] = (GOOD_DRAFT,),
     unsupported_claims: tuple[str, ...] = (),
@@ -98,8 +99,8 @@ def deps(
 ) -> PipelineDeps:
     return PipelineDeps(
         research=ResearchDeps(
-            searcher=FakeSearcher({QUERY.query: [SearchHit(url=CAREERS), SearchHit(url=PODCAST)]}),
-            fetcher=FakeFetcher(PAGES),
+            searcher=FakeSearcher({QUERY.query: [SearchHit(url=u) for u in pages]}),
+            fetcher=FakeFetcher(pages),
             planner=FakePlanner([QUERY]),
             reader=FakeReader(
                 candidates
@@ -185,3 +186,66 @@ async def test_person_not_found_falls_back_to_company_research_with_a_note():
     contact = d.writer.requests[0].contact  # type: ignore[attr-defined]
     assert (contact.company_name, contact.person_name) == ("Acme", None)
     assert "person_not_found" in outcome.notes
+
+
+async def test_weak_signals_end_as_low_signal_without_writing_a_generic_email():
+    d = deps(scores={PODCAST_QUOTE.claim: 2.0, HIRING.claim: 1.5})
+    outcome = await run(d)
+
+    assert outcome.state is RunState.LOW_SIGNAL
+    assert outcome.draft is None
+    assert d.writer.requests == []  # type: ignore[attr-defined]
+
+
+LAYOFFS_PAGE = "https://news.example/acme-layoffs"
+
+
+async def test_only_sensitive_news_sends_the_run_to_sensitive_review_without_a_draft():
+    pages = {
+        LAYOFFS_PAGE: Page(
+            url=LAYOFFS_PAGE,
+            text="Acme announced layoffs of 200 staff across its London office this week.",
+        )
+    }
+    layoffs = Candidate(
+        Cat.LAYOFFS, About.COMPANY, "Acme laid off 200 staff", "Acme announced layoffs of 200 staff"
+    )
+    d = deps(pages=pages, candidates={LAYOFFS_PAGE: [layoffs]})
+    outcome = await run(d)
+
+    assert outcome.state is RunState.NEEDS_REVIEW_SENSITIVE
+    assert outcome.draft is None
+
+
+async def test_a_claim_its_own_quote_does_not_support_never_becomes_the_hook():
+    d = deps(
+        scores={PODCAST_QUOTE.claim: 4.5, HIRING.claim: 3.5},
+        unsupported_claims=(PODCAST_QUOTE.claim,),
+    )
+    outcome = await run(d)
+
+    assert outcome.state is RunState.DRAFT_READY
+    assert d.writer.requests[0].hook.evidence.claim == HIRING.claim  # type: ignore[attr-defined]
+    assert outcome.ranking is not None
+    assert [(v.evidence.claim, v.reason) for v in outcome.ranking.vetoed] == [
+        (PODCAST_QUOTE.claim, "claim_not_supported")
+    ]
+
+
+async def test_each_eligible_hook_is_scored_twice_and_the_samples_are_averaged():
+    d = deps(
+        scores={PODCAST_QUOTE.claim: [5.0, 2.0], HIRING.claim: [4.0, 4.0]},
+        unsupported_claims=(),
+    )
+    outcome = await run(d)
+
+    assert outcome.ranking is not None
+    totals = {h.evidence.claim: h.total for h in outcome.ranking.ranked}
+    assert totals == {PODCAST_QUOTE.claim: 3.5, HIRING.claim: 4.0}
+    assert d.writer.requests[0].hook.evidence.claim == HIRING.claim  # type: ignore[attr-defined]
+
+
+async def test_vetoed_items_are_never_sent_for_scoring():
+    d = deps(unsupported_claims=(PODCAST_QUOTE.claim,), scores={HIRING.claim: 4.0})
+    await run(d)
+    assert PODCAST_QUOTE.claim not in d.scorer.scored  # type: ignore[attr-defined]

@@ -6,12 +6,13 @@ an honest state (moved, ambiguous, low signal, sensitive) instead of forcing a w
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from datetime import date
 
 from app.context.merge import MergedBrief
-from app.domain.models import ProspectInput, RunState
-from app.pipeline.hooks import DimensionScores, HookRanking, rank_hooks
+from app.domain.models import Evidence, ProspectInput, RunState
+from app.pipeline.hooks import DimensionScores, HookRanking, rank_hooks, veto_reason
 from app.pipeline.ports import (
     Contact,
     Draft,
@@ -28,11 +29,19 @@ from app.policy.draft_rules import DraftRules
 from app.research.loop import Budget, ResearchDeps, ResearchResult, run_research
 from app.research.ports import ResearchTarget
 
+SCORE_SAMPLES = 2  # independent judge samples per hook, averaged to steady the ranking
+
 # Identity results that stop the run until the rep decides.
 _PAUSES = {
     IdentityStatus.MOVED: RunState.CONTACT_MOVED,
     IdentityStatus.AMBIGUOUS: RunState.NEEDS_CLARIFICATION,
     IdentityStatus.SUGGESTED: RunState.NEEDS_CLARIFICATION,
+}
+
+# Ranking outcomes that end the run without a draft.
+_NO_HOOK = {
+    "low_signal": RunState.LOW_SIGNAL,
+    "only_sensitive": RunState.NEEDS_REVIEW_SENSITIVE,
 }
 
 
@@ -54,6 +63,31 @@ class RunOutcome:
     ranking: HookRanking | None = None
     draft: Draft | None = None
     notes: list[str] = field(default_factory=list)
+
+
+async def _verify(ledger: list[Evidence], checker: EntailmentChecker) -> list[Evidence]:
+    """S4: ask whether each hook-eligible item's quote supports its claim (one call per item)."""
+    eligible = [e for e in ledger if veto_reason(e) is None]
+    verdicts = await asyncio.gather(*(checker.entails(e) for e in eligible))
+    checked = {
+        e.id: e.model_copy(update={"entailment": v})
+        for e, v in zip(eligible, verdicts, strict=True)
+    }
+    return [checked.get(e.id, e) for e in ledger]
+
+
+async def _score(
+    ledger: list[Evidence], scorer: HookScorer, brief: MergedBrief
+) -> dict[str, list[DimensionScores]]:
+    """S5: score each veto-free item SCORE_SAMPLES times; rank_hooks averages the samples."""
+    eligible = [e for e in ledger if veto_reason(e) is None]
+    results = await asyncio.gather(
+        *(scorer.score(e, brief) for e in eligible for _ in range(SCORE_SAMPLES))
+    )
+    return {
+        e.id: list(results[i * SCORE_SAMPLES : (i + 1) * SCORE_SAMPLES])
+        for i, e in enumerate(eligible)
+    }
 
 
 async def run_prospect(
@@ -93,12 +127,13 @@ async def run_prospect(
         pains=tuple(brief.pains),
     )
     outcome.research = await run_research(target, deps.research, budget or Budget())
-    ledger = outcome.research.ledger
+    ledger = outcome.research.ledger = await _verify(outcome.research.ledger, deps.entailment)
 
-    samples: dict[str, list[DimensionScores]] = {
-        e.id: [await deps.scorer.score(e, brief)] for e in ledger
-    }
+    samples = await _score(ledger, deps.scorer, brief)
     outcome.ranking = rank_hooks(ledger, samples, weights=brief.hook_weights)
+    if outcome.ranking.outcome != "ok":
+        outcome.state = _NO_HOOK[outcome.ranking.outcome]
+        return outcome
 
     top = outcome.ranking.top()
     request = DraftRequest(
