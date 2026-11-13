@@ -9,6 +9,7 @@ from app.domain.models import (
     CompanyInfo,
     Offer,
     Persona,
+    Priority,
     ProspectInput,
     RunState,
     SellerProfile,
@@ -340,3 +341,34 @@ async def test_a_recency_window_the_seller_tightened_applies_to_the_draft():
 
     assert outcome.state is RunState.DRAFT_HELD  # episode is 24 days old; seller allows 14
     assert any("unsupported_recency" in p for p in outcome.problems)
+
+
+async def test_research_is_aimed_by_the_campaign_objective_pains_and_priorities():
+    profile = PROFILE.model_copy(
+        update={
+            "personas": [
+                Persona(
+                    id="fin",
+                    title_patterns=["VP Finance"],
+                    seniority=Seniority.VP,
+                    pains=["month-end close takes too long"],
+                )
+            ]
+        }
+    )
+    campaign = Campaign(
+        id="c1",
+        name="Q4",
+        objective="Book demos with finance leaders",
+        persona_id="fin",
+        angle="audit season is coming",
+        signal_priorities={Cat.HIRING_PATTERN: Priority.HIGH, Cat.FUNDING_MNA: Priority.LOW},
+    )
+    d = deps()
+    await run_prospect(PROSPECT, merge_brief(profile, campaign), d, rules=RULES, today=TODAY)
+
+    (target,) = d.research.planner.targets  # type: ignore[attr-defined]
+    assert target.objective == "Book demos with finance leaders"
+    assert target.pains == ("month-end close takes too long", "audit season is coming")
+    assert target.priorities == (Cat.HIRING_PATTERN,)
+    assert (target.person_name, target.title) == ("Priya Shah", "VP Finance")

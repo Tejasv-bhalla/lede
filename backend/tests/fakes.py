@@ -43,8 +43,10 @@ class FakeFetcher:
 class FakePlanner:
     def __init__(self, queries: Iterable[PlannedQuery]):
         self.queries = list(queries)
+        self.targets: list[ResearchTarget] = []
 
     async def plan(self, target: ResearchTarget) -> list[PlannedQuery]:
+        self.targets.append(target)
         return list(self.queries)
 
 

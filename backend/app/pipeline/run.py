@@ -11,7 +11,7 @@ from dataclasses import dataclass, field, replace
 from datetime import date
 
 from app.context.merge import MergedBrief
-from app.domain.models import Entailment, Evidence, ProspectInput, RunState
+from app.domain.models import Entailment, Evidence, Priority, ProspectInput, RunState
 from app.pipeline.hooks import DimensionScores, HookRanking, rank_hooks, veto_reason
 from app.pipeline.ports import (
     ClaimVerdict,
@@ -184,6 +184,7 @@ async def run_prospect(
         title=contact.title,
         objective=brief.objective,
         pains=tuple(brief.pains),
+        priorities=tuple(c for c, p in brief.signal_priorities.items() if p is Priority.HIGH),
     )
     outcome.research = await run_research(target, deps.research, budget or Budget())
     ledger = outcome.research.ledger = await _verify(outcome.research.ledger, deps.entailment)
