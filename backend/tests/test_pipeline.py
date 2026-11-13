@@ -242,6 +242,24 @@ async def test_an_unsupported_sentence_is_sent_back_for_a_fix_and_the_fixed_draf
     assert any(INVENTED in p for p in problems)
 
 
+NO_GREETING = Draft(
+    subject="Closing the books faster",
+    body="On episode 41 you said closing the books faster is your top priority for 2026. "
+    "Ledgerly helps finance teams shorten month-end close. Worth a short look?",
+    citations=("e2",),
+)
+
+
+async def test_a_draft_that_does_not_greet_the_contact_by_name_is_sent_back_for_a_fix():
+    d = deps(drafts=(NO_GREETING, NO_GREETING, GOOD_DRAFT))
+    outcome = await run(d)
+
+    assert outcome.state is RunState.DRAFT_READY
+    assert outcome.draft == GOOD_DRAFT
+    (problems,) = d.writer.revisions  # type: ignore[attr-defined]
+    assert any("Priya" in p for p in problems)
+
+
 async def test_a_draft_that_still_fails_after_two_fixes_is_held_with_its_problems_listed():
     d = deps(drafts=(DRAFT_WITH_INVENTED_METRIC,), unsupported_sentences=(INVENTED,))
     outcome = await run(d)

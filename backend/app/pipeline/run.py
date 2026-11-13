@@ -187,7 +187,12 @@ def _preflight(prospect: ProspectInput, brief: MergedBrief) -> list[str]:
 
 
 def _rules_for(
-    rules: DraftRules, hook: Evidence, ledger: list[Evidence], brief: MergedBrief, today: date
+    rules: DraftRules,
+    hook: Evidence,
+    ledger: list[Evidence],
+    brief: MergedBrief,
+    today: date,
+    contact: Contact,
 ) -> DraftRules:
     """Tighten the workspace rules for this run: the brief's never-claims, recency words only
     for a recent hook, and links only to evidence pages or the seller's approved proof."""
@@ -204,6 +209,7 @@ def _rules_for(
         never_claims=tuple(dict.fromkeys([*rules.never_claims, *brief.never_claims])),
         recency_allowed=rules.recency_allowed and freshness is Freshness.RECENT,
         allowed_urls=frozenset(allowed),
+        greet=contact.person_name.split()[0] if contact.person_name else None,
     )
 
 
@@ -453,7 +459,7 @@ async def _stages(
         hook=top[0],
         alternates=tuple(top[1:]),
         brief=brief,
-        rules=_rules_for(rules, top[0].evidence, ledger, brief, today),
+        rules=_rules_for(rules, top[0].evidence, ledger, brief, today, contact),
         today=today,
     )
     outcome.rules = request.rules

@@ -38,6 +38,7 @@ class DraftRules:
     recency_allowed: bool = True  # False when the hook's evidence is stale or undated
     allowed_urls: frozenset[str] | None = None  # None = links not checked
     footer: str | None = None
+    greet: str | None = None  # the recipient's first name, when we know who they are
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +50,12 @@ class Violation:
 def _found(phrases: Iterable[str], text: str) -> list[str]:
     lowered = text.casefold()
     return [p for p in phrases if p.casefold() in lowered]
+
+
+def _opening(body: str) -> str:
+    """The greeting line, or the first few words when the draft is one paragraph."""
+    lines = body.strip().splitlines()
+    return lines[0][:60] if lines else ""
 
 
 def check_draft(body: str, rules: DraftRules) -> list[Violation]:
@@ -66,6 +73,10 @@ def check_draft(body: str, rules: DraftRules) -> list[Violation]:
         for url in _URL.findall(body):
             if url.rstrip(".,;:!?") not in rules.allowed_urls:
                 violations.append(Violation("unknown_link", url))
+    if rules.greet and rules.greet.casefold() not in _opening(body).casefold():
+        violations.append(
+            Violation("missing_greeting", f"Greet {rules.greet} by name on the first line")
+        )
     if rules.footer and rules.footer.strip() not in body:
         violations.append(Violation("missing_footer", rules.footer))
     return violations

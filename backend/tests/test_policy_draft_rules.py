@@ -51,6 +51,14 @@ def test_an_old_fact_told_in_the_past_with_its_date_passes():
     assert "unsupported_recency" not in kinds(body, DraftRules(recency_allowed=False))
 
 
+def test_a_draft_that_does_not_greet_the_named_recipient_is_flagged():
+    nameless = "I saw Acme is hiring three accounts payable specialists in London. Worth a look?"
+    assert "missing_greeting" in kinds(nameless, DraftRules(greet="Priya"))
+    assert "missing_greeting" not in kinds("Priya,\n\n" + nameless, DraftRules(greet="Priya"))
+    assert "missing_greeting" not in kinds(GOOD, DraftRules(greet="priya"))
+    assert "missing_greeting" not in kinds(nameless, DraftRules())
+
+
 def test_link_not_in_the_evidence_is_flagged():
     body = GOOD + " See https://made-up.example/report for details."
     rules = DraftRules(allowed_urls=frozenset({"https://acme.com/careers"}))
