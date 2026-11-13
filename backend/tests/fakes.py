@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 
+from app.context.merge import MergedBrief
+from app.domain.hook_dimensions import HOOK_DIMENSIONS
+from app.domain.models import Entailment, Evidence, ProspectInput
+from app.pipeline.hooks import DimensionScores
+from app.pipeline.ports import ClaimVerdict, Draft, DraftRequest, Identity
 from app.research.ports import (
     Candidate,
     LedgerView,
@@ -64,3 +69,80 @@ class FakeReflector:
         reflection = self.script[min(self.calls, len(self.script) - 1)]
         self.calls += 1
         return reflection
+
+
+# ── pipeline AI roles ─────────────────────────────────────────────────────────
+
+
+class FakeResolver:
+    def __init__(self, identity: Identity):
+        self.identity = identity
+        self.calls = 0
+
+    async def resolve(self, prospect: ProspectInput) -> Identity:
+        self.calls += 1
+        return self.identity
+
+
+class FakeEntailment:
+    """Supported unless the claim is listed as unsupported."""
+
+    def __init__(self, unsupported: Iterable[str] = ()):
+        self.unsupported = set(unsupported)
+
+    async def entails(self, evidence: Evidence) -> Entailment:
+        if evidence.claim in self.unsupported:
+            return Entailment.UNSUPPORTED
+        return Entailment.SUPPORTED
+
+
+class FakeScorer:
+    """Scores every dimension with the value given for the evidence's claim (default 2)."""
+
+    def __init__(self, by_claim: dict[str, float]):
+        self.by_claim = by_claim
+        self.scored: list[str] = []
+
+    async def score(self, evidence: Evidence, brief: MergedBrief) -> DimensionScores:
+        self.scored.append(evidence.claim)
+        value = self.by_claim.get(evidence.claim, 2.0)
+        return DimensionScores(
+            scores=dict.fromkeys(HOOK_DIMENSIONS, value),
+            reasons=dict.fromkeys(HOOK_DIMENSIONS, "scripted"),
+        )
+
+
+class FakeWriter:
+    """Returns scripted drafts in order (for draft and revise calls alike)."""
+
+    def __init__(self, drafts: Iterable[Draft]):
+        self.drafts = list(drafts)
+        self.requests: list[DraftRequest] = []
+        self.revisions: list[Sequence[str]] = []
+
+    def _next(self) -> Draft:
+        return self.drafts.pop(0) if len(self.drafts) > 1 else self.drafts[0]
+
+    async def draft(self, request: DraftRequest) -> Draft:
+        self.requests.append(request)
+        return self._next()
+
+    async def revise(self, draft: Draft, problems: Sequence[str], request: DraftRequest) -> Draft:
+        self.revisions.append(list(problems))
+        return self._next()
+
+
+class FakeFactChecker:
+    """Flags the listed sentences as unsupported whenever they appear in a draft."""
+
+    def __init__(self, unsupported: Iterable[str] = ()):
+        self.unsupported = list(unsupported)
+        self.checked: list[str] = []
+
+    async def check(self, draft: Draft, evidence: Sequence[Evidence]) -> list[ClaimVerdict]:
+        self.checked.append(draft.body)
+        return [
+            ClaimVerdict(claim=s, verdict=Entailment.UNSUPPORTED, reason="not in evidence")
+            for s in self.unsupported
+            if s in draft.body
+        ]
