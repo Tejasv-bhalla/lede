@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from app.agents.schemas import DraftOut
 from app.pipeline.hooks import RankedHook
 from app.pipeline.ports import Draft, DraftRequest
-from app.providers.llm_router import LLMRouter
+from app.providers.llm_router import LLMRouter, Structured
 
 PROMPT_VERSION = "writer-v4"
 
@@ -84,7 +84,7 @@ class LLMWriter:
 - {style}
 
 Return the subject, the body (no signature, no footer), and the evidence ids you relied on."""
-        return self._as_draft((await self._router.structured("writer", prompt, DraftOut)).value)
+        return self._as_draft(await self._router.structured("writer", prompt, DraftOut))
 
     async def revise(self, draft: Draft, problems: Sequence[str], request: DraftRequest) -> Draft:
         listed = "\n".join(f"- {p}" for p in problems)
@@ -99,10 +99,14 @@ PROBLEMS:
 {listed}
 
 {_brief(request)}"""
-        return self._as_draft((await self._router.structured("writer", prompt, DraftOut)).value)
+        return self._as_draft(await self._router.structured("writer", prompt, DraftOut))
 
     @staticmethod
-    def _as_draft(out: DraftOut) -> Draft:
+    def _as_draft(answer: Structured[DraftOut]) -> Draft:
+        out = answer.value
         return Draft(
-            subject=out.subject.strip(), body=out.body.strip(), citations=tuple(out.citations)
+            subject=out.subject.strip(),
+            body=out.body.strip(),
+            citations=tuple(out.citations),
+            written_by=answer.provider,
         )

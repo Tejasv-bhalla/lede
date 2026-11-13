@@ -177,6 +177,8 @@ export interface Draft {
   subject: string
   body: string
   citations: string[]
+  /** The model that wrote it, e.g. "groq:openai/gpt-oss-120b" or "yours:anthropic:claude-opus-5-5". */
+  written_by?: string | null
 }
 
 export interface ClaimVerdict {

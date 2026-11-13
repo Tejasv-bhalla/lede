@@ -18,6 +18,7 @@ import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
+import { writerLabel } from '@/lib/models'
 
 import { SourceQuote } from './evidence'
 import { Problem } from './problem'
@@ -168,6 +169,11 @@ export function DraftView({
           ),
         )}
       </div>
+      {draft.written_by && (
+        <p className="mt-6 border-t pt-3 text-xs text-muted-foreground">
+          Written by {writerLabel(draft.written_by)}
+        </p>
+      )}
     </article>
   )
 }

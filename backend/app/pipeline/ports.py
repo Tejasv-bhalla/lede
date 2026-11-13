@@ -49,6 +49,7 @@ class Draft:
     subject: str
     body: str
     citations: tuple[str, ...] = ()  # evidence ids the draft relies on
+    written_by: str | None = None  # the model that wrote (or last revised) it; None = the rep
 
 
 @dataclass(frozen=True, slots=True)
