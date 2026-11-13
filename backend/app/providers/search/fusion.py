@@ -89,7 +89,7 @@ class FusedSearcher:
         providers: Sequence[SearchProvider],
         *,
         max_results: int = 8,
-        timeout_s: float = 15.0,
+        timeout_s: float = 10.0,  # Tavily and Exa answer in 1-5 s; DuckDuckGo sometimes hangs
     ) -> None:
         self._providers = list(providers)
         self._max_results = max_results
