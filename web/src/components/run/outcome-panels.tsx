@@ -40,21 +40,30 @@ export function ClarificationPicker({ run }: { run: RunDetail }) {
   const identity = run.outcome?.identity
   const candidates = identity?.candidates ?? []
   const company = run.prospect.company_name
+  const named = run.prospect.person_name
+  const unconfirmed = identity?.status === 'not_found' && Boolean(named)
   const [title, intro] =
     identity?.status === 'ambiguous'
       ? [
           'Which of these is your prospect?',
           'More than one person matches. Pick the right one so we never write about a stranger.',
         ]
-      : candidates.length
+      : unconfirmed
         ? [
-            'Who should we write to?',
-            `We found people at ${company} who match this campaign's buyer. Pick one and research starts.`,
+            `We couldn't confirm ${named} at ${company}`,
+            candidates.length
+              ? `Nothing we found shows ${named} working there now. These people do; pick one, or write to ${named} if you know better.`
+              : `Nothing we found shows ${named} working there now. Write to them anyway if you know better, or name someone else.`,
           ]
-        : [
-            'Who should we write to?',
-            `We could not find anyone at ${company} in this campaign's buyer roles. Add the person you want to reach and research starts.`,
-          ]
+        : candidates.length
+          ? [
+              'Who should we write to?',
+              `We found people at ${company} who match this campaign's buyer. Pick one and research starts.`,
+            ]
+          : [
+              'Who should we write to?',
+              `We could not find anyone at ${company} in this campaign's buyer roles. Add the person you want to reach and research starts.`,
+            ]
 
   return (
     <section className="max-w-3xl">
@@ -98,8 +107,32 @@ export function ClarificationPicker({ run }: { run: RunDetail }) {
           ))}
         </ul>
       )}
+      {unconfirmed && named && (
+        <div className="mb-6 flex items-center justify-between gap-4 rounded-lg border border-dashed px-4 py-3 text-sm">
+          <span className="text-muted-foreground">
+            You know {named} is there? The email will use the name as you gave it.
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={pinned.pending}
+            onClick={() =>
+              pinned.go({
+                company_name: company,
+                company_domain: run.prospect.company_domain ?? null,
+                person_name: named,
+                title: run.prospect.title ?? null,
+                evidence_url: null,
+                evidence_quote: null,
+              })
+            }
+          >
+            Write to {named.split(' ')[0]} anyway
+          </Button>
+        </div>
+      )}
       <ContactForm
-        heading={candidates.length ? 'Someone else' : undefined}
+        heading={candidates.length || unconfirmed ? 'Someone else' : undefined}
         pending={pinned.pending}
         onSubmit={(person_name, title) =>
           pinned.go({
