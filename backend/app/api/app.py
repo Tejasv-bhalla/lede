@@ -4,13 +4,23 @@ from __future__ import annotations
 
 import csv
 import hmac
+import io
 import json
 from collections.abc import AsyncIterator, Callable
 from dataclasses import asdict
 from datetime import date
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Request, UploadFile
+from fastapi import (
+    APIRouter,
+    Depends,
+    FastAPI,
+    Header,
+    HTTPException,
+    Request,
+    Response,
+    UploadFile,
+)
 from pydantic import BaseModel, model_validator
 from sse_starlette import EventSourceResponse
 
@@ -244,6 +254,68 @@ async def review_run(run_id: str, body: ReviewRequest, runs: RunsDep) -> dict[st
         raise HTTPException(409, str(exc)) from exc
     except DraftRejected as exc:
         raise HTTPException(422, {"violations": exc.violations}) from exc
+
+
+@api.get("/dashboard")
+async def dashboard(store: StoreDep) -> dict[str, Any]:
+    by_state, by_review = await store.count_runs()
+    reviewed = sum(by_review.values())
+    approved = by_review.get("APPROVED", 0) + by_review.get("APPROVED_WITH_EDITS", 0)
+    return {
+        "runs_total": sum(by_state.values()),
+        "by_state": by_state,
+        "by_review": by_review,
+        "approval_rate": round(approved / reviewed, 3) if reviewed else None,
+    }
+
+
+EXPORT_COLUMNS = (
+    "run_id",
+    "campaign_id",
+    "company_name",
+    "person_name",
+    "title",
+    "subject",
+    "body",
+    "hook",
+    "hook_url",
+    "review_state",
+    "reviewed_at",
+)
+
+
+@api.get("/export")
+async def export_csv(store: StoreDep, campaign_id: str | None = None) -> Response:
+    """Approved drafts, footer appended, ready to paste into a mail tool or CRM."""
+    profile = await store.get_profile()
+    footer = SellerProfile.model_validate(profile).footer if profile else ""
+    out = io.StringIO()
+    writer = csv.DictWriter(out, fieldnames=EXPORT_COLUMNS)
+    writer.writeheader()
+    for run in await store.approved_runs(campaign_id):
+        draft, prospect = run["review"]["draft"], run["prospect"]
+        ranked = (run["outcome"] or {}).get("ranking", {}).get("ranked") or [{}]
+        hook = ranked[0].get("evidence", {})
+        writer.writerow(
+            {
+                "run_id": run["id"],
+                "campaign_id": run["campaign_id"],
+                "company_name": prospect["company_name"],
+                "person_name": prospect.get("person_name") or "",
+                "title": prospect.get("title") or "",
+                "subject": draft["subject"],
+                "body": f"{draft['body']}\n\n{footer}" if footer else draft["body"],
+                "hook": hook.get("claim", ""),
+                "hook_url": hook.get("url", ""),
+                "review_state": run["review_state"],
+                "reviewed_at": run["review"]["at"],
+            }
+        )
+    return Response(
+        out.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="approved-drafts.csv"'},
+    )
 
 
 def create_app(

@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, select
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, func, select
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -71,6 +71,7 @@ class RunRow(Base):
     outcome: Mapped[dict[str, Any] | None] = mapped_column(Json, nullable=True)
     events: Mapped[list[dict[str, Any]]] = mapped_column(Json, default=list)
     review: Mapped[dict[str, Any] | None] = mapped_column(Json, nullable=True)
+    review_state: Mapped[str | None] = mapped_column(String(32), index=True, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -81,7 +82,7 @@ class RunRow(Base):
             "prospect_id": self.prospect_id,
             "tier": self.tier,
             "state": self.state,
-            "review_state": self.review["state"] if self.review else None,
+            "review_state": self.review_state,
             "prospect": self.inputs["prospect"],
             "created_at": self.created_at.isoformat(),
             "finished_at": self.finished_at.isoformat() if self.finished_at else None,
@@ -230,4 +231,32 @@ class Store:
         async with self.session() as s, s.begin():
             row = await s.get(RunRow, run_id)
             assert row is not None
-            row.review = review
+            row.review, row.review_state = review, review["state"]
+
+    async def count_runs(self) -> tuple[dict[str, int], dict[str, int]]:
+        """(runs per state, reviewed runs per review state)."""
+        async with self.session() as s:
+            states = await s.execute(select(RunRow.state, func.count()).group_by(RunRow.state))
+            reviews = await s.execute(
+                select(RunRow.review_state, func.count())
+                .where(RunRow.review_state.is_not(None))
+                .group_by(RunRow.review_state)
+            )
+            return (
+                {state: n for state, n in states},
+                {state: n for state, n in reviews if state},
+            )
+
+    async def approved_runs(self, campaign_id: str | None = None) -> list[dict[str, Any]]:
+        query = (
+            select(RunRow)
+            .where(RunRow.review_state.in_(("APPROVED", "APPROVED_WITH_EDITS")))
+            .order_by(RunRow.created_at)
+        )
+        if campaign_id:
+            query = query.where(RunRow.campaign_id == campaign_id)
+        async with self.session() as s:
+            return [
+                {**r.summary(), "outcome": r.outcome, "review": r.review}
+                for r in await s.scalars(query)
+            ]

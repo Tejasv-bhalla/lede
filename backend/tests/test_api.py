@@ -1,3 +1,5 @@
+import csv
+import io
 import json
 from collections.abc import AsyncIterator, Callable
 
@@ -352,3 +354,41 @@ async def test_runs_without_a_draft_cannot_be_reviewed(client, world):
     world["deps"] = lambda: deps(scores={PODCAST_QUOTE.claim: 1.0})
     run_id = await finished_run(client)
     assert (await review(client, run_id, action="approve")).status_code == 409
+
+
+# ── dashboard and export ──────────────────────────────────────────────────────
+
+
+async def test_dashboard_counts_runs_by_state_and_review_outcome(client, world):
+    approved = await finished_run(client)
+    await review(client, approved, action="approve")
+    world["deps"] = lambda: deps(scores={PODCAST_QUOTE.claim: 1.0})
+    await finished_run(client)
+
+    board = (await client.get("/api/dashboard", headers=AUTH)).json()
+    assert board["runs_total"] == 2
+    assert board["by_state"] == {"DRAFT_READY": 1, "LOW_SIGNAL": 1}
+    assert board["by_review"] == {"APPROVED": 1}
+    assert board["approval_rate"] == 1.0  # of drafts reviewed
+
+
+async def test_export_is_a_csv_of_approved_drafts_with_the_seller_footer(client):
+    approved = await finished_run(client)
+    await review(client, approved, action="approve")
+    rejected = await finished_run(client)
+    await review(client, rejected, action="reject", reason="tone")
+
+    await client.put(
+        "/api/profile",
+        json={**PROFILE, "footer": "Ledgerly, 1 Main St. Reply STOP to opt out."},
+        headers=AUTH,
+    )
+    r = await client.get("/api/export", headers=AUTH)
+    assert r.headers["content-type"].startswith("text/csv")
+    rows = list(csv.DictReader(io.StringIO(r.text)))
+    assert [row["run_id"] for row in rows] == [approved]
+    assert rows[0]["person_name"] == "Priya Shah"
+    assert rows[0]["subject"] == "Closing the books faster"
+    assert rows[0]["body"].endswith("Reply STOP to opt out.")
+    assert rows[0]["hook"] == PODCAST_QUOTE.claim
+    assert rows[0]["hook_url"] == "https://pod.example/ep41"
