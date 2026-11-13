@@ -19,8 +19,20 @@ from app.policy.quotes import verify_quote
 from app.providers.llm_router import LLMRouter
 from app.research.ports import PlannedQuery, ResearchTarget, Searcher, SearchHit
 
-PROMPT_VERSION = "identity-v1"
+PROMPT_VERSION = "identity-v2"
 MAX_RESULTS = 12
+TITLES_PER_QUERY = 4
+MAX_TITLE_QUERIES = 2
+# When nobody in the buyer's roles shows up, the top leader can still route the email.
+LEADER_TITLES = ("CEO", "President", "Founder")
+
+
+def suggestion_queries(company: str, titles: list[str]) -> list[str]:
+    """Every buyer title, a few per query, then one search for the company's leaders. Plain
+    words, not OR: the engines treat OR loosely and drift into unrelated news."""
+    chunks = [titles[i : i + TITLES_PER_QUERY] for i in range(0, len(titles), TITLES_PER_QUERY)]
+    queries = [f'"{company}" {" ".join(c)}' for c in chunks[:MAX_TITLE_QUERIES]]
+    return [*queries, f'"{company}" leadership team {" ".join(LEADER_TITLES)}']
 
 
 def _numbered(hits: list[SearchHit]) -> str:
@@ -37,17 +49,23 @@ class SearchResolver:
     def __init__(self, router: LLMRouter, searcher: Searcher) -> None:
         self._router, self._searcher = router, searcher
 
-    async def _search(self, queries: list[str], target: ResearchTarget) -> list[SearchHit]:
+    async def _search(
+        self, queries: list[str], target: ResearchTarget, *, news: bool | None = None
+    ) -> list[SearchHit]:
         results = await asyncio.gather(
-            *(self._searcher.search(PlannedQuery(Cat.ROLE_CHANGE, q), target) for q in queries),
+            *(
+                self._searcher.search(PlannedQuery(Cat.ROLE_CHANGE, q, news=news), target)
+                for q in queries
+            ),
             return_exceptions=True,
         )
+        # Interleave so every query gets a share of the result slots, not just the first one.
+        lists = [r for r in results if not isinstance(r, BaseException)]
         hits: dict[str, SearchHit] = {}
-        for result in results:
-            if isinstance(result, BaseException):
-                continue
-            for h in result:
-                hits.setdefault(h.url, h)
+        for rank in range(max((len(r) for r in lists), default=0)):
+            for r in lists:
+                if rank < len(r):
+                    hits.setdefault(r[rank].url, r[rank])
         return list(hits.values())[:MAX_RESULTS]
 
     def _proven(self, person: PersonOut | None, hits: list[SearchHit]) -> Contact | None:
@@ -139,20 +157,22 @@ copied EXACTLY from that result's title or text. Also give the company's own web
         self, prospect: ProspectInput, target: ResearchTarget, brief: MergedBrief
     ) -> Identity:
         company = prospect.company_name
-        titles = (brief.persona.title_patterns if brief.persona else [])[:2] or ["Head of"]
-        hits = await self._search([f'"{company}" "{t}"' for t in titles], target)
+        titles = (brief.persona.title_patterns if brief.persona else []) or ["Head of"]
+        hits = await self._search(suggestion_queries(company, titles), target, news=False)
         if not hits:
             return Identity(IdentityStatus.NOT_FOUND)
         prompt = f"""A salesperson gave only a company: {company}. Find who at {company} matches the
-role they want to reach: {", ".join(titles)}.
+roles they want to reach: {", ".join(titles)}.
 
 Search results:
 {_numbered(hits)}
 
-Suggest up to 3 people who CURRENTLY work at {company} in or near that role, best first. Only
-people the results actually show; never invent a name. For each: `result` is the number of the
-result that shows it, `quote` copied EXACTLY from that result's title or text. If nobody fits,
-return no suggestions. Also give {company}'s own website domain if a result shows it."""
+Suggest up to 3 people who CURRENTLY work at {company} in or near those roles, best first. If
+nobody in those roles is shown, suggest {company}'s top leader ({", ".join(LEADER_TITLES)}) when
+a result shows one. Only people the results actually show; never invent a name. For each:
+`result` is the number of the result that shows it, `quote` copied EXACTLY from that result's
+title or text. If nobody fits, return no suggestions. Also give {company}'s own website domain
+if a result shows it."""
         out = (await self._router.structured("judge", prompt, SuggestionOut)).value
         domain = self._domain(out.company_domain, prospect.company_domain, hits)
         people = tuple(

@@ -207,3 +207,11 @@ async def test_cached_results_expire_so_news_stays_fresh(ledger):
     now[0] = NOV + timedelta(days=CACHE_DAYS + 1)
     await searcher.search(QUERY, TARGET)
     assert tavily.calls == 2
+
+
+async def test_the_same_words_searched_as_web_instead_of_news_are_not_answered_from_cache(ledger):
+    tavily = CountingProvider("tavily", hits("https://a.example/1"))
+    searcher = metered([tavily], ledger)
+    await searcher.search(QUERY, TARGET)
+    await searcher.search(PlannedQuery(QUERY.category, QUERY.query, news=False), TARGET)
+    assert tavily.calls == 2

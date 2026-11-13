@@ -93,7 +93,8 @@ class MemoryLedger:
 
 def cache_key(engine: str, query: PlannedQuery) -> str:
     """Same engine + same signal type + same words (any case or spacing) = same answer."""
-    return f"{engine}|{query.category.value}|{' '.join(query.query.casefold().split())}"
+    mode = "" if query.news is None else f"|news={query.news}"
+    return f"{engine}|{query.category.value}{mode}|{' '.join(query.query.casefold().split())}"
 
 
 @dataclass(frozen=True, slots=True)

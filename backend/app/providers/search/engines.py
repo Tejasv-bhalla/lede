@@ -49,6 +49,8 @@ def parse_date(value: Any) -> date | None:
 
 
 def _is_news(query: PlannedQuery) -> bool:
+    if query.news is not None:
+        return query.news
     return query.category in NEWS_CATEGORIES
 
 

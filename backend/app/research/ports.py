@@ -26,6 +26,9 @@ class PlannedQuery:
     category: SignalCategory
     query: str
     goal: str = ""
+    # None: news mode for news-type signals. False forces a general web search (e.g. finding
+    # who works at a company, which lives on team pages rather than in the news).
+    news: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)
