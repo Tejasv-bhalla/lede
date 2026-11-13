@@ -87,6 +87,7 @@ function FinishedRun({ run, events }: { run: RunDetail; events: TimedEvent[] }) 
           runId={run.id}
           state={run.state}
           prospect={run.prospect}
+          email={outcome.email ?? null}
           draft={outcome.draft}
           claims={outcome.claims ?? []}
           evidence={ledger}

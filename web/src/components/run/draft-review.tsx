@@ -3,7 +3,15 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
 import { useProfile, useReview } from '@/api/hooks'
-import type { ClaimVerdict, Draft, Evidence, ProspectInput, Review, RunState } from '@/api/types'
+import type {
+  ClaimVerdict,
+  Draft,
+  Evidence,
+  FoundEmail,
+  ProspectInput,
+  Review,
+  RunState,
+} from '@/api/types'
 import { ReviewBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -19,7 +27,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import { writerLabel } from '@/lib/models'
-import { emailBody, gmailComposeUrl, linkedinUrl } from '@/lib/send'
+import { emailBody, emailOrigin, gmailComposeUrl, linkedinUrl } from '@/lib/send'
 
 import { SourceQuote } from './evidence'
 import { Problem } from './problem'
@@ -180,9 +188,25 @@ export function DraftView({
 }
 
 /** After approval: the rep sends it from their own Gmail or LinkedIn. Lede sends nothing. */
-function SendYourself({ draft, prospect }: { draft: Draft; prospect: ProspectInput }) {
+function SendYourself({
+  draft,
+  prospect,
+  email,
+}: {
+  draft: Draft
+  prospect: ProspectInput
+  email: FoundEmail | null
+}) {
   const footer = useProfile().data?.footer ?? ''
-  const text = `Subject: ${draft.subject}\n\n${emailBody(draft, footer)}`
+  const [to, setTo] = useState(email?.address ?? '')
+  const text = [
+    to.trim() && `To: ${to.trim()}`,
+    `Subject: ${draft.subject}`,
+    '',
+    emailBody(draft, footer),
+  ]
+    .filter((line, i) => line || i > 0)
+    .join('\n')
 
   async function copy(what: string, value: string) {
     try {
@@ -204,12 +228,40 @@ function SendYourself({ draft, prospect }: { draft: Draft; prospect: ProspectInp
           press send there. Your footer is added.
         </p>
       </div>
+      <div className="flex flex-col gap-1.5">
+        <label htmlFor="send-to" className="text-sm font-medium">
+          To
+        </label>
+        <Input
+          id="send-to"
+          type="email"
+          placeholder="Their email address"
+          value={to}
+          onChange={(e) => setTo(e.target.value)}
+        />
+        <p className="text-xs text-muted-foreground">
+          {email && to.trim() === email.address ? (
+            <>
+              {emailOrigin(email)}{' '}
+              {email.url && (
+                <a href={email.url} target="_blank" rel="noreferrer" className="underline">
+                  See the page
+                </a>
+              )}
+            </>
+          ) : email ? (
+            'Changed by you.'
+          ) : (
+            'No address was found. Type it here if you know it.'
+          )}
+        </p>
+      </div>
       <div className="flex flex-wrap gap-2">
         <Button onClick={() => copy('Email copied', text)}>
           <Copy className="size-4" /> Copy email
         </Button>
         <Button variant="outline" asChild>
-          <a href={gmailComposeUrl(draft, footer)} target="_blank" rel="noreferrer">
+          <a href={gmailComposeUrl(draft, footer, to)} target="_blank" rel="noreferrer">
             <Mail className="size-4" /> Open in Gmail
           </a>
         </Button>
@@ -237,6 +289,7 @@ export function DraftReview({
   runId,
   state,
   prospect,
+  email,
   draft,
   claims,
   evidence,
@@ -246,6 +299,7 @@ export function DraftReview({
   runId: string
   state: RunState
   prospect: ProspectInput
+  email: FoundEmail | null
   draft: Draft
   claims: ClaimVerdict[]
   evidence: Evidence[]
@@ -334,7 +388,9 @@ export function DraftReview({
         <DraftView draft={shown} claims={review ? [] : claims} evidence={evidence} />
       )}
 
-      {review && review.state !== 'REJECTED' && <SendYourself draft={shown} prospect={prospect} />}
+      {review && review.state !== 'REJECTED' && (
+        <SendYourself draft={shown} prospect={prospect} email={email} />
+      )}
 
       {!review && (
         <div className="sticky bottom-4 z-20 flex items-center justify-between gap-3 rounded-lg border bg-card/95 px-4 py-3 shadow-lg backdrop-blur">

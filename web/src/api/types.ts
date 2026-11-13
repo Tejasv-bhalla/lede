@@ -97,6 +97,16 @@ export interface ProspectInput {
   title?: string | null
   linkedin_url?: string | null
   rep_notes?: string | null
+  email?: string | null
+}
+
+/** The contact's address and where it came from. */
+export interface FoundEmail {
+  address: string
+  source: 'rep' | 'page' | 'finder' // typed in, published on a page read, or Hunter
+  url: string | null
+  confidence: number | null
+  status: string
 }
 
 export type RunState =
@@ -213,6 +223,7 @@ export interface RunOutcome {
   claims: ClaimVerdict[]
   problems: string[]
   notes: string[]
+  email?: FoundEmail | null
 }
 
 export interface StageEvent {

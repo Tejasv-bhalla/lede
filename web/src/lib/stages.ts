@@ -7,6 +7,7 @@ export const STAGES = [
   { key: 'score', label: 'Score the best openers' },
   { key: 'draft', label: 'Write two drafts, keep the better' },
   { key: 'fact_check', label: 'Fact-check sentence by sentence' },
+  { key: 'email', label: 'Find their email' },
 ] as const
 
 export type TimedEvent = StageEvent & { at?: number }

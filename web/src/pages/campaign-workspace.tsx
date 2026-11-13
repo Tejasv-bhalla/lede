@@ -300,6 +300,21 @@ function AddProspectDialog({
                 />
               )}
             </Field>
+            <Field
+              label="Email (optional)"
+              className="col-span-2"
+              hint="Leave blank and we look for it once a draft is written."
+            >
+              {(id) => (
+                <Input
+                  id={id}
+                  type="email"
+                  placeholder="priya@acme.com"
+                  value={p.email ?? ''}
+                  onChange={set('email')}
+                />
+              )}
+            </Field>
           </div>
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
@@ -316,7 +331,7 @@ function AddProspectDialog({
 }
 
 const CSV_TEMPLATE =
-  'Full name,Company,Website,Job title,Notes\nPriya Shah,Acme,acme.com,VP Finance,Met at FinOps Summit\n,Initech,initech.com,,\n'
+  'Full name,Company,Website,Job title,Email,Notes\nPriya Shah,Acme,acme.com,VP Finance,,Met at FinOps Summit\n,Initech,initech.com,,,\n'
 
 function ImportCsvDialog({
   campaignId,
@@ -428,6 +443,7 @@ function ImportCsvDialog({
                     <TableHead>Person</TableHead>
                     <TableHead>Company</TableHead>
                     <TableHead>Website</TableHead>
+                    <TableHead>Email</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -440,6 +456,9 @@ function ImportCsvDialog({
                       </TableCell>
                       <TableCell>{r.company_name}</TableCell>
                       <TableCell className="text-muted-foreground">{r.company_domain}</TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {r.email ?? (r.person_name ? "We'll look for it" : '')}
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
