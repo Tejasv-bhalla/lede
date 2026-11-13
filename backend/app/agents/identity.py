@@ -19,7 +19,7 @@ from app.policy.quotes import verify_quote
 from app.providers.llm_router import LLMRouter
 from app.research.ports import PlannedQuery, ResearchTarget, Searcher, SearchHit
 
-PROMPT_VERSION = "identity-v3"
+PROMPT_VERSION = "identity-v4"
 MAX_RESULTS = 12
 TITLES_PER_QUERY = 4
 MAX_TITLE_QUERIES = 2
@@ -98,10 +98,23 @@ class SearchResolver:
             objective=brief.objective,
         )
         if prospect.person_name:
-            return await self._person(prospect, target)
-        return await self._suggest(prospect, target, brief)
+            return await self._person(prospect, target, brief)
+        people = await self._people_at(prospect, target, brief)
+        if not people:
+            return Identity(IdentityStatus.NOT_FOUND)
+        return Identity(IdentityStatus.SUGGESTED, candidates=people)
 
-    async def _person(self, prospect: ProspectInput, target: ResearchTarget) -> Identity:
+    async def _not_found(
+        self, prospect: ProspectInput, target: ResearchTarget, brief: MergedBrief
+    ) -> Identity:
+        """The named person can't be confirmed: offer people who do work there instead."""
+        return Identity(
+            IdentityStatus.NOT_FOUND, candidates=await self._people_at(prospect, target, brief)
+        )
+
+    async def _person(
+        self, prospect: ProspectInput, target: ResearchTarget, brief: MergedBrief
+    ) -> Identity:
         name, company = prospect.person_name, prospect.company_name
         hits = await self._search(
             [
@@ -111,7 +124,7 @@ class SearchResolver:
             target,
         )
         if not hits:
-            return Identity(IdentityStatus.NOT_FOUND)
+            return await self._not_found(prospect, target, brief)
         prompt = f"""Check a sales prospect's identity from web search results.
 
 Prospect as given by the salesperson: {name}, {prospect.title or "title unknown"}, at {company}
@@ -125,7 +138,8 @@ Decide:
 - "moved": a recent result clearly shows {name} now works at a DIFFERENT company. Put the new
   role in `match` (company_name = the new company).
 - "ambiguous": several different people named {name} could fit and the results don't say which
-  one is at {company}. List up to 3 in `candidates`.
+  one is at {company}. List up to 3 in `candidates`; give each one's company as the result shows
+  it, or "{company}" if the result doesn't say.
 - "not_found": nothing reliable about this person.
 For every person you name: `result` is the number of the result that shows it, and `quote` is
 copied EXACTLY from that result's title or text. Also give the company's own website domain
@@ -139,8 +153,9 @@ copied EXACTLY from that result's title or text. Also give the company's own web
                 return Identity(IdentityStatus.AMBIGUOUS, candidates=candidates)
         if out.status == "moved" and match and match.company_name != company:
             return Identity(IdentityStatus.MOVED, contact=match)
-        if out.status == "not_found":
-            return Identity(IdentityStatus.NOT_FOUND)
+        if out.status == "not_found" or match is None:
+            # "Confirmed" needs a quote that really shows them there; otherwise we don't know.
+            return await self._not_found(prospect, target, brief)
         return Identity(
             IdentityStatus.CONFIRMED,
             contact=Contact(
@@ -153,16 +168,16 @@ copied EXACTLY from that result's title or text. Also give the company's own web
             ),
         )
 
-    async def _suggest(
+    async def _people_at(
         self, prospect: ProspectInput, target: ResearchTarget, brief: MergedBrief
-    ) -> Identity:
+    ) -> tuple[Contact, ...]:
         company = prospect.company_name
         titles = (brief.persona.title_patterns if brief.persona else []) or ["Head of"]
         hits = await self._search(suggestion_queries(company, titles), target, news=False)
         if not hits:
-            return Identity(IdentityStatus.NOT_FOUND)
-        prompt = f"""A salesperson gave only a company: {company}. Find who at {company} matches the
-roles they want to reach: {", ".join(titles)}.
+            return ()
+        prompt = f"""A salesperson wants to reach someone at {company}. Find who at {company}
+matches the roles they want to reach: {", ".join(titles)}.
 
 Search results:
 {_numbered(hits)}
@@ -188,6 +203,4 @@ if a result shows it."""
             for c in (self._proven(p, hits) for p in out.suggestions)
             if c
         )
-        if not people:
-            return Identity(IdentityStatus.NOT_FOUND)
-        return Identity(IdentityStatus.SUGGESTED, candidates=people)
+        return people

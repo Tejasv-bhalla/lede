@@ -25,7 +25,6 @@ from app.providers.llm_router import LLMUnavailable
 from app.research.ports import Candidate, Page
 from tests.fakes import FakeEntailment, FakeFactChecker, FakeWriter
 from tests.scenario import (
-    CAREERS,
     GOOD_DRAFT,
     HIRING,
     PAGES,
@@ -105,25 +104,25 @@ async def test_the_reps_pick_resumes_the_run_without_resolving_identity_again():
     assert d.writer.requests[0].contact == PRIYA  # type: ignore[attr-defined]
 
 
-async def test_person_not_found_falls_back_to_company_research_with_a_note():
-    d = deps(
-        identity=Identity(IdentityStatus.NOT_FOUND),
-        scores={HIRING.claim: 4.0},
-        candidates={CAREERS: [HIRING]},
-    )
-    outcome = await run_prospect(
-        PROSPECT.model_copy(update={"title": "VP Finance"}), BRIEF, d, rules=RULES, today=TODAY
-    )
+async def test_a_named_person_who_cannot_be_confirmed_pauses_with_people_who_do_work_there():
+    ceo = Contact(company_name="Acme", person_name="Dana Wu", title="CEO")
+    d = deps(identity=Identity(IdentityStatus.NOT_FOUND, candidates=(ceo,)))
+    outcome = await run(d)
+
+    assert outcome.state is RunState.NEEDS_CLARIFICATION
+    assert "person_not_found" in outcome.notes
+    assert outcome.identity is not None and outcome.identity.candidates == (ceo,)
+    assert d.research.searcher.queries == []  # type: ignore[attr-defined]
+    assert outcome.draft is None
+
+
+async def test_the_rep_can_still_write_to_an_unconfirmed_name_by_choosing_it():
+    as_given = Contact(company_name="Acme", company_domain="acme.example", person_name="Priya Shah")
+    d = deps(identity=Identity(IdentityStatus.NOT_FOUND))
+    outcome = await run(d, pinned=as_given)
 
     assert outcome.state is RunState.DRAFT_READY
-    contact = d.writer.requests[0].contact  # type: ignore[attr-defined]
-    # The rep named this person, so the email still greets them by name.
-    assert (contact.company_name, contact.person_name, contact.title) == (
-        "Acme",
-        "Priya Shah",
-        "VP Finance",
-    )
-    assert "person_not_found" in outcome.notes
+    assert d.writer.requests[0].contact == as_given  # type: ignore[attr-defined]
 
 
 async def test_company_only_with_nobody_found_pauses_for_the_rep_to_add_a_contact():

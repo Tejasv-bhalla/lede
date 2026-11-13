@@ -381,22 +381,14 @@ async def _stages(
         else await deps.resolver.resolve(prospect, brief)
     )
     contact = identity.contact
-    if identity.status is IdentityStatus.NOT_FOUND and not prospect.person_name:
-        # Nobody to write to: ask the rep for a contact rather than mail a nameless "Hi,".
-        outcome.notes.append("no_contact_found")
-        outcome.state = RunState.NEEDS_CLARIFICATION
-        events.done(_describe_identity(identity, company_only=True))
-        return
     if identity.status is IdentityStatus.NOT_FOUND:
-        # The rep named this person; the web can't confirm it, so research the company and
-        # still greet them by the name the rep gave.
-        outcome.notes.append("person_not_found")
-        contact = Contact(
-            company_name=prospect.company_name,
-            company_domain=prospect.company_domain,
-            person_name=prospect.person_name,
-            title=prospect.title,
-        )
+        # Never write to someone we can't confirm: ask the rep. They can pick a suggested
+        # person who does work there, name someone else, or write to this name anyway.
+        named = prospect.person_name
+        outcome.notes.append("person_not_found" if named else "no_contact_found")
+        outcome.state = RunState.NEEDS_CLARIFICATION
+        events.done(_describe_identity(identity, named=named, company=prospect.company_name))
+        return
     events.done(_describe_identity(identity))
     if identity.status in _PAUSES:
         outcome.state = _PAUSES[identity.status]
@@ -485,10 +477,13 @@ async def _stages(
     outcome.state = RunState.DRAFT_HELD if outcome.problems else RunState.DRAFT_READY
 
 
-def _describe_identity(identity: Identity, *, company_only: bool = False) -> str:
+def _describe_identity(identity: Identity, *, named: str | None = None, company: str = "") -> str:
     c = identity.contact
-    if company_only:
-        return "Nobody found in the buyer's roles; add a contact to continue"
+    if identity.status is IdentityStatus.NOT_FOUND:
+        found = _count(len(identity.candidates), "person", "people")
+        if named:
+            return f"Couldn't confirm {named} at {company}; {found} who do work there"
+        return f"Nobody found in the buyer's roles; {found} suggested"
     if identity.status is IdentityStatus.CONFIRMED and c:
         return f"Confirmed {c.person_name or 'the company'} at {c.company_name}"
     if identity.status is IdentityStatus.MOVED and c:
@@ -497,7 +492,7 @@ def _describe_identity(identity: Identity, *, company_only: bool = False) -> str
         return f"{_count(len(identity.candidates), 'possible match', 'possible matches')} found"
     if identity.status is IdentityStatus.SUGGESTED:
         return f"Suggested {_count(len(identity.candidates), 'contact')} to choose from"
-    return "Person not found; researching the company"
+    return "Identity checked"
 
 
 def _one_decimal(x: float) -> str:
