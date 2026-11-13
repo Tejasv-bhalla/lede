@@ -23,7 +23,7 @@ from pydantic import BaseModel, ValidationError
 JSON_RETRIES = 1  # corrective retries per provider before falling back
 RATE_LIMIT_COOLDOWN_S = 60.0  # rest after a rate limit when the provider doesn't say how long
 OVERLOAD_COOLDOWN_S = 30.0  # rest after "overloaded" (503/529): usually brief demand spikes
-MAX_WAIT_S = 30.0  # when the whole chain is resting, wait at most this long for one to return
+MAX_WAIT_S = 65.0  # when a whole chain is resting, wait up to one per-minute window for a model
 MAX_IN_FLIGHT = 3  # concurrent calls per model: bursts are what trip per-minute free limits
 
 
@@ -112,7 +112,8 @@ class LLMRouter:
                     if exc.status_code in (503, 529):
                         self._rest(provider, OVERLOAD_COOLDOWN_S)
                     failures.append(f"{provider.name}: {type(exc).__name__}")
-                except APIConnectionError as exc:
+                except APIConnectionError as exc:  # includes timeouts: an overloaded model hangs
+                    self._rest(provider, OVERLOAD_COOLDOWN_S)
                     failures.append(f"{provider.name}: {type(exc).__name__}")
                 except ValidationError:
                     failures.append(f"{provider.name}: invalid JSON")

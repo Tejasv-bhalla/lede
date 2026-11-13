@@ -19,15 +19,22 @@ GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 MISTRAL_URL = "https://api.mistral.ai/v1"
 
 # (provider key, model id) per role, best first.
+# Each Groq model has its own free allowance (1K requests/day, 8K tokens/min, measured 13 Nov
+# 2026), so different Groq models in one chain add capacity. Gemini Flash is often overloaded
+# for free users; Flash-Lite answers reliably.
 ROLE_CHAINS: dict[Role, list[tuple[str, str]]] = {
     "judge": [
         ("groq", "openai/gpt-oss-120b"),
+        ("groq", "qwen/qwen3.8-27b"),
         ("gemini", "gemini-3.8-flash"),
+        ("gemini", "gemini-3.5-flash-lite"),
+        ("groq", "openai/gpt-oss-20b"),
         ("mistral", "mistral-medium-latest"),
     ],
     "writer": [
         ("gemini", "gemini-3.8-flash"),
         ("groq", "openai/gpt-oss-120b"),
+        ("groq", "qwen/qwen3.8-27b"),
         ("mistral", "mistral-medium-latest"),
     ],
     "reader": [
@@ -35,7 +42,7 @@ ROLE_CHAINS: dict[Role, list[tuple[str, str]]] = {
         ("groq", "openai/gpt-oss-20b"),
         ("mistral", "mistral-small-latest"),
     ],
-    "checker": [  # a different model family from the writer
+    "checker": [  # a different model family from the writer's usual models
         ("groq", "qwen/qwen3.8-27b"),
         ("gemini", "gemini-3.5-flash-lite"),
         ("mistral", "mistral-small-latest"),

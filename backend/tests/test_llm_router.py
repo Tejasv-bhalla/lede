@@ -51,6 +51,28 @@ def router_with(handler, routes) -> LLMRouter:
 VALID = json.dumps({"supported": True, "reason": "quote says so"})
 
 
+class FakeTime:
+    """A clock and a sleep that advance together, so waiting costs no real time."""
+
+    def __init__(self) -> None:
+        self.now = 1000.0
+        self.slept: list[float] = []
+
+    def clock(self) -> float:
+        return self.now
+
+    async def sleep(self, seconds: float) -> None:
+        self.slept.append(seconds)
+        self.now += seconds
+
+
+def paced(handler, routes) -> tuple[LLMRouter, FakeTime]:
+    router = router_with(handler, routes)
+    t = FakeTime()
+    router.clock, router.sleep = t.clock, t.sleep
+    return router, t
+
+
 async def test_returns_a_validated_object_from_the_first_provider():
     router = router_with(lambda req: completion(VALID), {"checker": [GROQ, GEMINI]})
     result = await router.structured("checker", "Is the claim supported?", Verdict)
@@ -100,7 +122,7 @@ async def test_provider_that_keeps_returning_invalid_json_is_skipped():
 
 
 async def test_raises_when_every_provider_fails():
-    router = router_with(lambda req: httpx.Response(429, json={}), {"checker": [GROQ, GEMINI]})
+    router, _ = paced(lambda req: httpx.Response(429, json={}), {"checker": [GROQ, GEMINI]})
     with pytest.raises(LLMUnavailable):
         await router.structured("checker", "Is the claim supported?", Verdict)
 
@@ -143,28 +165,6 @@ def test_a_role_without_any_configured_provider_is_reported_missing():
 
 
 # ── pacing under free-tier limits ─────────────────────────────────────────────
-
-
-class FakeTime:
-    """A clock and a sleep that advance together, so waiting costs no real time."""
-
-    def __init__(self) -> None:
-        self.now = 1000.0
-        self.slept: list[float] = []
-
-    def clock(self) -> float:
-        return self.now
-
-    async def sleep(self, seconds: float) -> None:
-        self.slept.append(seconds)
-        self.now += seconds
-
-
-def paced(handler, routes) -> tuple[LLMRouter, FakeTime]:
-    router = router_with(handler, routes)
-    t = FakeTime()
-    router.clock, router.sleep = t.clock, t.sleep
-    return router, t
 
 
 async def test_when_every_provider_is_rate_limited_the_router_waits_for_the_soonest_one():
@@ -226,3 +226,18 @@ async def test_each_model_has_a_cap_on_calls_in_flight():
     router = router_with(slow_handler, {"checker": [GROQ]})
     await asyncio.gather(*(router.structured("checker", f"q{i}", Verdict) for i in range(10)))
     assert peak == MAX_IN_FLIGHT
+
+
+async def test_a_model_that_hangs_is_rested_like_an_overloaded_one():
+    calls: list[str] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        calls.append(req.url.host)
+        if req.url.host == "gemini.test":
+            raise httpx.ReadTimeout("no answer", request=req)
+        return completion(VALID)
+
+    router, _ = paced(handler, {"writer": [GEMINI, GROQ]})
+    await router.structured("writer", "q1", Verdict)
+    await router.structured("writer", "q2", Verdict)
+    assert calls == ["gemini.test", "groq.test", "groq.test"]
