@@ -129,7 +129,7 @@ async def test_drafts_from_the_best_verified_hook_and_marks_the_run_ready():
     assert outcome.draft == GOOD_DRAFT
     assert outcome.ranking is not None
     assert [h.evidence.claim for h in outcome.ranking.top()] == [PODCAST_QUOTE.claim, HIRING.claim]
-    (request,) = d.writer.requests  # type: ignore[attr-defined]
+    request = d.writer.requests[0]  # type: ignore[attr-defined]
     assert request.hook.evidence.claim == PODCAST_QUOTE.claim
     assert request.contact == PRIYA
 
@@ -249,3 +249,77 @@ async def test_vetoed_items_are_never_sent_for_scoring():
     d = deps(unsupported_claims=(PODCAST_QUOTE.claim,), scores={HIRING.claim: 4.0})
     await run(d)
     assert PODCAST_QUOTE.claim not in d.scorer.scored  # type: ignore[attr-defined]
+
+
+SALESY_DRAFT = Draft(
+    subject="Quick question",
+    body="I hope this finds you well. Ledgerly is a game-changer for finance teams. "
+    "Can we book 30 minutes?",
+)
+
+
+async def test_two_variants_are_drafted_and_the_one_that_passes_the_rules_is_kept():
+    d = deps(drafts=(SALESY_DRAFT, GOOD_DRAFT))
+    outcome = await run(d)
+
+    assert outcome.state is RunState.DRAFT_READY
+    assert outcome.draft == GOOD_DRAFT
+    assert sorted(r.variant for r in d.writer.requests) == [0, 1]  # type: ignore[attr-defined]
+
+
+INVENTED = "Teams like yours cut close time by 60%."
+DRAFT_WITH_INVENTED_METRIC = Draft(
+    subject="Closing the books faster",
+    body="Priya, on episode 41 you said closing the books faster is your top priority for "
+    f"2026. {INVENTED} Worth a short look?",
+)
+
+
+async def test_an_unsupported_sentence_is_sent_back_for_a_fix_and_the_fixed_draft_is_kept():
+    d = deps(
+        drafts=(DRAFT_WITH_INVENTED_METRIC, DRAFT_WITH_INVENTED_METRIC, GOOD_DRAFT),
+        unsupported_sentences=(INVENTED,),
+    )
+    outcome = await run(d)
+
+    assert outcome.state is RunState.DRAFT_READY
+    assert outcome.draft == GOOD_DRAFT
+    (problems,) = d.writer.revisions  # type: ignore[attr-defined]
+    assert any(INVENTED in p for p in problems)
+
+
+async def test_a_draft_that_still_fails_after_two_fixes_is_held_with_its_problems_listed():
+    d = deps(drafts=(DRAFT_WITH_INVENTED_METRIC,), unsupported_sentences=(INVENTED,))
+    outcome = await run(d)
+
+    assert outcome.state is RunState.DRAFT_HELD
+    assert outcome.draft == DRAFT_WITH_INVENTED_METRIC
+    assert len(d.writer.revisions) == 2  # type: ignore[attr-defined]
+    assert any(INVENTED in p for p in outcome.problems)
+
+
+async def test_recency_wording_is_flagged_when_the_hook_is_old():
+    old_podcast = {
+        PODCAST: Page(url=PODCAST, text=PAGES[PODCAST].text, published_at=date(2024, 3, 1))
+    }
+    says_recently = Draft(
+        subject="Your podcast",
+        body="Priya, you recently said closing the books faster is your top priority. "
+        "Worth a short look?",
+    )
+    d = deps(pages=old_podcast, candidates={PODCAST: [PODCAST_QUOTE]}, drafts=(says_recently,))
+    outcome = await run(d)
+
+    assert outcome.state is RunState.DRAFT_HELD
+    assert any("unsupported_recency" in p for p in outcome.problems)
+
+
+async def test_links_that_are_not_in_the_evidence_are_flagged():
+    with_link = Draft(
+        subject="Closing the books faster",
+        body=GOOD_DRAFT.body + " Details: https://ledgerly.example/case-study",
+    )
+    outcome = await run(deps(drafts=(with_link,)))
+
+    assert outcome.state is RunState.DRAFT_HELD
+    assert any("unknown_link" in p for p in outcome.problems)
