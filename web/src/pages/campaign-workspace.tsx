@@ -1,4 +1,4 @@
-import { Download, FileUp, Play, Plus, Settings2, Trash2 } from 'lucide-react'
+import { Download, FileUp, Play, Plus, RotateCw, Settings2, Trash2 } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { toast } from 'sonner'
@@ -12,7 +12,7 @@ import {
   useRuns,
   useStartRun,
 } from '@/api/hooks'
-import type { CsvPreview, Prospect, ProspectInput, Tier } from '@/api/types'
+import type { CsvPreview, Prospect, ProspectInput, RunState, Tier } from '@/api/types'
 import { PageHeader } from '@/components/app-shell'
 import { Field } from '@/components/field'
 import { ReviewBadge, StateBadge } from '@/components/status-badge'
@@ -60,6 +60,83 @@ const TIERS: { value: Tier; label: string; note: string }[] = [
   { value: 'deep', label: 'Deep', note: 'Up to five rounds, 20 facts scored. For key accounts.' },
 ]
 
+type Filter = 'all' | 'not_run' | 'needs_you' | 'approved'
+
+const NEEDS_YOU: RunState[] = [
+  'DRAFT_READY',
+  'DRAFT_HELD',
+  'NEEDS_CLARIFICATION',
+  'CONTACT_MOVED',
+  'FAILED',
+]
+
+const FILTERS: { key: Filter; label: string; test: (p: Prospect) => boolean }[] = [
+  { key: 'all', label: 'All', test: () => true },
+  { key: 'not_run', label: 'Not run', test: (p) => !p.last_run },
+  {
+    key: 'needs_you',
+    label: 'Need you',
+    test: (p) =>
+      Boolean(p.last_run && !p.last_run.review_state && NEEDS_YOU.includes(p.last_run.state)),
+  },
+  {
+    key: 'approved',
+    label: 'Approved',
+    test: (p) => Boolean(p.last_run?.review_state?.startsWith('APPROVED')),
+  },
+]
+
+/** One clear next step per prospect; re-running is always there but never the loudest. */
+function RowActions({
+  prospect: p,
+  busy,
+  onRun,
+}: {
+  prospect: Prospect
+  busy: boolean
+  onRun: () => void
+}) {
+  const last = p.last_run
+  const open = (label: string, variant: 'default' | 'outline' | 'ghost') => (
+    <Button variant={variant} size="sm" asChild>
+      <Link to={`/runs/${last!.id}`}>{label}</Link>
+    </Button>
+  )
+  const primary = !last ? (
+    <Button variant="outline" size="sm" disabled={busy} onClick={onRun}>
+      <Play className="size-3.5" /> Research
+    </Button>
+  ) : last.state === 'RUNNING' ? (
+    open('Watch', 'outline')
+  ) : last.review_state ? (
+    open('Open', 'ghost')
+  ) : last.state === 'DRAFT_READY' || last.state === 'DRAFT_HELD' ? (
+    open('Review draft', 'default')
+  ) : last.state === 'NEEDS_CLARIFICATION' || last.state === 'CONTACT_MOVED' ? (
+    open('Choose contact', 'outline')
+  ) : (
+    open('Open', 'ghost')
+  )
+  return (
+    <div className="flex items-center justify-end gap-1">
+      {primary}
+      {last && last.state !== 'RUNNING' && (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-8 text-muted-foreground"
+          disabled={busy}
+          onClick={onRun}
+          aria-label={`Run ${p.person_name ?? p.company_name} again`}
+          title="Run again"
+        >
+          <RotateCw className="size-3.5" />
+        </Button>
+      )}
+    </div>
+  )
+}
+
 export function CampaignWorkspace() {
   const { campaignId = '' } = useParams()
   const campaign = useCampaign(campaignId)
@@ -70,6 +147,12 @@ export function CampaignWorkspace() {
   const [adding, setAdding] = useState(false)
   const [importing, setImporting] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [filter, setFilter] = useState<Filter>('all')
+  const all = prospects.data ?? []
+  const counts = Object.fromEntries(
+    FILTERS.map((f) => [f.key, all.filter(f.test).length]),
+  ) as Record<Filter, number>
+  const shown = all.filter(FILTERS.find((f) => f.key === filter)!.test)
 
   // Every approved run counts, not only each prospect's latest: the export includes them all.
   const runs = useRuns({ campaign_id: campaignId })
@@ -95,7 +178,7 @@ export function CampaignWorkspace() {
   return (
     <div className="max-w-6xl">
       <PageHeader
-        title={campaign.data?.name ?? 'Campaign'}
+        title={campaign.data?.name.trim() || 'Campaign'}
         description={campaign.data?.objective}
         actions={
           <>
@@ -130,41 +213,66 @@ export function CampaignWorkspace() {
         }
       />
 
-      <div className="mb-4 flex items-center gap-3 text-sm">
-        <span className="text-muted-foreground">Research depth</span>
-        <Select value={tier} onValueChange={(v) => setTier(v as Tier)}>
-          <SelectTrigger className="w-36" aria-label="Research depth">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {TIERS.map((t) => (
-              <SelectItem key={t.value} value={t.value}>
-                {t.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <span className="text-muted-foreground">{TIERS.find((t) => t.value === tier)?.note}</span>
+      <div className="mb-5 flex flex-wrap items-center justify-between gap-4">
+        <div
+          role="tablist"
+          aria-label="Show prospects"
+          className="flex gap-1 rounded-lg bg-secondary p-1"
+        >
+          {FILTERS.map((f) => (
+            <button
+              key={f.key}
+              type="button"
+              role="tab"
+              aria-selected={filter === f.key}
+              onClick={() => setFilter(f.key)}
+              className={cn(
+                'rounded-md px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground',
+                filter === f.key && 'bg-card font-medium text-foreground shadow-sm',
+              )}
+            >
+              {f.label}
+              <span
+                className={cn(
+                  'ml-1.5 tabular-nums',
+                  f.key === 'needs_you' && counts.needs_you > 0 && 'text-primary',
+                )}
+              >
+                {counts[f.key]}
+              </span>
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center gap-3 text-sm">
+          <span className="text-muted-foreground">Research depth</span>
+          <Select value={tier} onValueChange={(v) => setTier(v as Tier)}>
+            <SelectTrigger className="w-32" aria-label="Research depth">
+              <SelectValue>{TIERS.find((t) => t.value === tier)?.label}</SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              {TIERS.map((t) => (
+                <SelectItem key={t.value} value={t.value}>
+                  <span className="flex flex-col">
+                    {t.label}
+                    <span className="text-xs text-muted-foreground">{t.note}</span>
+                  </span>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
       {prospects.isLoading ? (
         <Skeleton className="h-48 w-full" />
       ) : !prospects.data?.length ? (
-        <div className="rounded-lg border border-dashed px-8 py-12 text-center">
+        <div className="rounded-xl border border-dashed px-8 py-14 text-center">
           <h2>No prospects yet</h2>
           <p className="mx-auto mt-2 max-w-md text-muted-foreground">
             Add a person and their company, or just a company and we'll suggest who to write to.
             Have a list? Import a CSV.
           </p>
           <div className="mt-6 flex justify-center gap-2">
-            <Button
-              variant="ghost"
-              disabled={!approved}
-              title={approved ? undefined : 'Approve a draft first'}
-              onClick={download}
-            >
-              <Download className="size-4" /> Approved drafts{approved ? ` (${approved})` : ''}
-            </Button>
             <Button variant="outline" onClick={() => setImporting(true)}>
               Import CSV
             </Button>
@@ -172,29 +280,35 @@ export function CampaignWorkspace() {
           </div>
         </div>
       ) : (
-        <div className="rounded-lg border bg-card">
+        <div className="overflow-hidden rounded-xl border bg-card">
           <Table>
             <TableHeader>
-              <TableRow>
+              <TableRow className="bg-secondary/50 hover:bg-secondary/50">
                 <TableHead className="pl-5">Prospect</TableHead>
                 <TableHead>Company</TableHead>
-                <TableHead>Latest run</TableHead>
-                <TableHead>Review</TableHead>
+                <TableHead>Status</TableHead>
                 <TableHead className="pr-5 text-right">
                   <span className="sr-only">Actions</span>
                 </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {prospects.data.map((p) => (
+              {shown.map((p) => (
                 <TableRow key={p.id}>
                   <TableCell className="pl-5">
-                    <p className="font-medium">
-                      {p.person_name ?? (
-                        <span className="text-muted-foreground">Anyone suitable</span>
-                      )}
+                    {p.person_name || p.last_run?.contact_name ? (
+                      <p className="font-medium">{p.person_name ?? p.last_run?.contact_name}</p>
+                    ) : (
+                      <p className="text-muted-foreground">No contact yet</p>
+                    )}
+                    <p className="text-xs text-muted-foreground">
+                      {p.title ??
+                        (p.person_name
+                          ? ''
+                          : p.last_run?.contact_name
+                            ? 'Picked by you'
+                            : "We'll suggest who to write to")}
                     </p>
-                    {p.title && <p className="text-xs text-muted-foreground">{p.title}</p>}
                   </TableCell>
                   <TableCell>
                     <p>{p.company_name}</p>
@@ -204,38 +318,32 @@ export function CampaignWorkspace() {
                   </TableCell>
                   <TableCell>
                     {p.last_run ? (
-                      <Link to={`/runs/${p.last_run.id}`} className="flex flex-col gap-1">
-                        <StateBadge state={p.last_run.state} />
+                      <div className="flex flex-col items-start gap-1">
+                        {p.last_run.review_state ? (
+                          <ReviewBadge state={p.last_run.review_state} />
+                        ) : (
+                          <StateBadge state={p.last_run.state} />
+                        )}
                         <span className="text-xs text-muted-foreground">
                           {ago(p.last_run.finished_at ?? p.last_run.created_at)}
                         </span>
-                      </Link>
+                      </div>
                     ) : (
-                      <span className="text-sm text-muted-foreground">Not run</span>
+                      <span className="text-sm text-muted-foreground">Not run yet</span>
                     )}
                   </TableCell>
-                  <TableCell>
-                    {p.last_run?.review_state && <ReviewBadge state={p.last_run.review_state} />}
-                  </TableCell>
-                  <TableCell className="pr-5 text-right">
-                    {p.last_run?.state === 'RUNNING' ? (
-                      <Button variant="outline" size="sm" asChild>
-                        <Link to={`/runs/${p.last_run.id}`}>Watch</Link>
-                      </Button>
-                    ) : (
-                      <Button
-                        variant={p.last_run ? 'outline' : 'default'}
-                        size="sm"
-                        disabled={startRun.isPending}
-                        onClick={() => run(p)}
-                      >
-                        <Play className="size-3.5" />
-                        {p.last_run ? 'Run again' : 'Research and draft'}
-                      </Button>
-                    )}
+                  <TableCell className="pr-5">
+                    <RowActions prospect={p} busy={startRun.isPending} onRun={() => run(p)} />
                   </TableCell>
                 </TableRow>
               ))}
+              {shown.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={4} className="py-10 text-center text-muted-foreground">
+                    Nothing here right now.
+                  </TableCell>
+                </TableRow>
+              )}
             </TableBody>
           </Table>
         </div>

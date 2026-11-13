@@ -4,6 +4,7 @@ import { api } from './client'
 import type {
   Campaign,
   CampaignCheck,
+  CampaignListItem,
   Contact,
   CsvPreview,
   Dashboard,
@@ -51,7 +52,10 @@ export function useSaveProfile() {
 }
 
 export function useCampaigns() {
-  return useQuery({ queryKey: keys.campaigns, queryFn: () => api.get<Campaign[]>('/campaigns') })
+  return useQuery({
+    queryKey: keys.campaigns,
+    queryFn: () => api.get<CampaignListItem[]>('/campaigns'),
+  })
 }
 
 export function useCampaign(id: string) {
@@ -167,7 +171,9 @@ export function useReview(runId: string) {
       reason?: string
     }) => api.post<Review>(`/runs/${runId}/review`, body),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: keys.run(runId) })
+      // keys.runs also covers this run's own key, so desk counts update everywhere.
+      qc.invalidateQueries({ queryKey: keys.runs })
+      qc.invalidateQueries({ queryKey: keys.campaigns })
       qc.invalidateQueries({ queryKey: keys.dashboard })
     },
   })

@@ -2,6 +2,7 @@ import { Cpu, LayoutDashboard, LockKeyhole, Moon, Settings2, Sun, Users } from '
 import { NavLink, Outlet } from 'react-router-dom'
 
 import { setAccessCode } from '@/api/client'
+import { useDesk } from '@/lib/desk'
 import { useTheme } from '@/lib/theme'
 import { cn } from '@/lib/utils'
 
@@ -14,6 +15,7 @@ const NAV = [
 
 export function AppShell() {
   const { theme, toggle } = useTheme()
+  const desk = useDesk()
   return (
     <div className="grid min-h-svh grid-cols-[232px_1fr]">
       <aside className="border-r border-sidebar-border bg-sidebar">
@@ -36,6 +38,14 @@ export function AppShell() {
               >
                 <Icon className="size-4" aria-hidden />
                 {label}
+                {to === '/' && desk.count > 0 && (
+                  <span
+                    className="ml-auto rounded-full bg-primary px-1.5 text-xs leading-5 font-medium text-primary-foreground tabular-nums"
+                    title={`${desk.count} waiting for you`}
+                  >
+                    {desk.count}
+                  </span>
+                )}
               </NavLink>
             ))}
           </nav>

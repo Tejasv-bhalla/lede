@@ -77,6 +77,18 @@ export interface Campaign {
   hook_weight_overrides: Record<string, number>
 }
 
+/** How far a campaign's prospects have got (sent with the campaign list only). */
+export interface CampaignStats {
+  prospects: number
+  not_run: number
+  to_review: number // drafts ready or held that nobody has reviewed
+  needs_you: number // runs waiting for the rep to pick or confirm a contact
+  approved: number
+  last_run_at: string | null
+}
+
+export type CampaignListItem = Campaign & { stats: CampaignStats }
+
 export interface BriefIssue {
   code: string
   severity: 'error' | 'warning'
@@ -128,6 +140,8 @@ export type ReviewState = 'APPROVED' | 'APPROVED_WITH_EDITS' | 'REJECTED'
 
 export interface RunSummary {
   id: string
+  /** Who the email is to: the picked contact, else the prospect's person (lists only). */
+  contact_name?: string | null
   state: RunState
   review_state: ReviewState | null
   tier: Tier
