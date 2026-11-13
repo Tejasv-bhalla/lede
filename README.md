@@ -12,6 +12,9 @@ approves every email. **Lede never sends anything itself.**
 
 When the evidence is weak, wrong or risky, Lede says so and stops or asks. It never invents a hook.
 
+**Live app:** [lede-fgxl.onrender.com](https://lede-fgxl.onrender.com) (access code shared with
+the submission). The free server sleeps when idle, so the first visit can take up to a minute.
+
 Built for the Zamp AI Solutions Analyst case study (problem statement 3). The full design rationale,
 with sources, is in [SYSTEM_DESIGN.md](SYSTEM_DESIGN.md).
 
