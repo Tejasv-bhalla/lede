@@ -18,7 +18,7 @@ from app.domain.models import (
 )
 from app.domain.models import SignalCategory as Cat
 from app.pipeline.ports import Contact, Draft, Identity, IdentityStatus
-from app.pipeline.run import PipelineDeps, run_prospect
+from app.pipeline.run import PipelineDeps, StageEvent, run_prospect
 from app.policy.draft_rules import DraftRules
 from app.providers.llm_router import LLMUnavailable
 from app.research.loop import ResearchDeps
@@ -413,3 +413,33 @@ async def test_running_out_of_models_fails_the_run_but_keeps_the_research():
     assert outcome.state is RunState.FAILED
     assert outcome.research is not None and outcome.research.ledger
     assert any("writer" in p for p in outcome.problems)
+
+
+async def test_each_stage_reports_its_progress_for_the_live_view():
+    events: list[StageEvent] = []
+    await run(deps(scores={PODCAST_QUOTE.claim: 4.5}), on_event=events.append)
+
+    assert [(e.stage, e.status) for e in events] == [
+        (stage, status)
+        for stage in ("identity", "research", "verify", "score", "draft", "fact_check")
+        for status in ("started", "done")
+    ] + [("run", "finished")]
+    assert events[-1].summary == "DRAFT_READY"
+    assert all(e.summary for e in events if e.status == "done")
+
+
+async def test_a_run_that_stops_early_reports_where_and_why():
+    events: list[StageEvent] = []
+    await run(deps(scores={PODCAST_QUOTE.claim: 1.0}), on_event=events.append)
+
+    assert [e.stage for e in events if e.status == "done"][-1] == "score"
+    assert (events[-1].stage, events[-1].summary) == ("run", "LOW_SIGNAL")
+
+
+async def test_a_failed_stage_is_reported_as_failed():
+    events: list[StageEvent] = []
+    d = replace(deps(scores={PODCAST_QUOTE.claim: 4.5}), writer=WriterWithNoModelsLeft([]))
+    await run(d, on_event=events.append)
+
+    assert (events[-2].stage, events[-2].status) == ("draft", "failed")
+    assert (events[-1].stage, events[-1].summary) == ("run", "FAILED")

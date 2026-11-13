@@ -7,8 +7,10 @@ an honest state (moved, ambiguous, low signal, sensitive) instead of forcing a w
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import date
+from typing import Literal
 
 from app.context.merge import MergedBrief
 from app.domain.models import Entailment, Evidence, Priority, ProspectInput, RunState
@@ -58,6 +60,16 @@ class PipelineDeps:
     scorer: HookScorer
     writer: Writer
     fact_checker: FactChecker
+
+
+EventStatus = Literal["started", "done", "failed", "finished"]
+
+
+@dataclass(frozen=True, slots=True)
+class StageEvent:
+    stage: str  # identity | research | verify | score | draft | fact_check | run
+    status: EventStatus
+    summary: str  # one line for the live view; the final state for the "run" event
 
 
 @dataclass(slots=True)
@@ -168,26 +180,58 @@ async def run_prospect(
     today: date,
     budget: Budget | None = None,
     pinned: Contact | None = None,
+    on_event: Callable[[StageEvent], None] | None = None,
 ) -> RunOutcome:
     """Run every stage and return the outcome; never raises for model outages.
 
     `pinned` is the contact the rep confirmed after a pause; identity is not resolved again.
+    `on_event` receives a started/done event per stage and a final one, for the live view.
     """
+    events = _Events(on_event)
     problems = _preflight(prospect, brief)
-    if problems:
-        return RunOutcome(RunState.INVALID_INPUT, problems=problems)
-    outcome = RunOutcome(RunState.RUNNING)
-    try:
-        await _stages(outcome, prospect, brief, deps, rules, today, budget or Budget(), pinned)
-    except LLMUnavailable as exc:
-        # Keep whatever the earlier stages produced, so a retry or the rep can build on it.
-        outcome.state = RunState.FAILED
-        outcome.problems.append(str(exc))
+    outcome = RunOutcome(
+        RunState.INVALID_INPUT if problems else RunState.RUNNING, problems=problems
+    )
+    if not problems:
+        try:
+            await _stages(
+                outcome, events, prospect, brief, deps, rules, today, budget or Budget(), pinned
+            )
+        except LLMUnavailable as exc:
+            # Keep whatever earlier stages produced, so a retry or the rep can build on it.
+            events.failed(str(exc))
+            outcome.state = RunState.FAILED
+            outcome.problems.append(str(exc))
+    events.finished(outcome.state)
     return outcome
+
+
+class _Events:
+    def __init__(self, sink: Callable[[StageEvent], None] | None) -> None:
+        self._sink = sink
+        self._stage = "run"
+
+    def _send(self, stage: str, status: EventStatus, summary: str) -> None:
+        if self._sink is not None:
+            self._sink(StageEvent(stage, status, summary))
+
+    def started(self, stage: str) -> None:
+        self._stage = stage
+        self._send(stage, "started", "")
+
+    def done(self, summary: str) -> None:
+        self._send(self._stage, "done", summary)
+
+    def failed(self, reason: str) -> None:
+        self._send(self._stage, "failed", reason)
+
+    def finished(self, state: RunState) -> None:
+        self._send("run", "finished", state.value)
 
 
 async def _stages(
     outcome: RunOutcome,
+    events: _Events,
     prospect: ProspectInput,
     brief: MergedBrief,
     deps: PipelineDeps,
@@ -196,22 +240,25 @@ async def _stages(
     budget: Budget,
     pinned: Contact | None,
 ) -> None:
+    events.started("identity")
     identity = outcome.identity = (
         Identity(IdentityStatus.CONFIRMED, contact=pinned)
         if pinned
         else await deps.resolver.resolve(prospect)
     )
-    if identity.status in _PAUSES:
-        outcome.state = _PAUSES[identity.status]
-        return
     contact = identity.contact
     if identity.status is IdentityStatus.NOT_FOUND:
         outcome.notes.append("person_not_found")
         contact = Contact(
             company_name=prospect.company_name, company_domain=prospect.company_domain
         )
+    events.done(_describe_identity(identity))
+    if identity.status in _PAUSES:
+        outcome.state = _PAUSES[identity.status]
+        return
     assert contact is not None, "a confirmed identity always carries its contact"
 
+    events.started("research")
     target = ResearchTarget(
         company_name=contact.company_name,
         company_domain=contact.company_domain,
@@ -221,16 +268,33 @@ async def _stages(
         pains=tuple(brief.pains),
         priorities=tuple(c for c, p in brief.signal_priorities.items() if p is Priority.HIGH),
     )
-    outcome.research = await run_research(target, deps.research, budget)
-    ledger = outcome.research.ledger = await _verify(outcome.research.ledger, deps.entailment)
+    research = outcome.research = await run_research(target, deps.research, budget)
+    events.done(
+        f"{len(research.ledger)} verified items from {research.pages_used} pages in "
+        f"{research.rounds} round(s); stopped: {research.stop_reason}"
+    )
 
+    events.started("verify")
+    ledger = research.ledger = await _verify(research.ledger, deps.entailment)
+    unsupported = sum(e.entailment is Entailment.UNSUPPORTED for e in ledger)
+    events.done(
+        f"{sum(e.entailment is not None for e in ledger)} checked, {unsupported} unsupported"
+    )
+
+    events.started("score")
     samples = await _score(ledger, deps.scorer, brief)
-    outcome.ranking = rank_hooks(ledger, samples, weights=brief.hook_weights)
-    if outcome.ranking.outcome != "ok":
-        outcome.state = _NO_HOOK[outcome.ranking.outcome]
+    ranking = outcome.ranking = rank_hooks(ledger, samples, weights=brief.hook_weights)
+    events.done(
+        f"top hook {ranking.ranked[0].total:.2f}: {ranking.ranked[0].evidence.claim}"
+        if ranking.ranked
+        else "no usable hook"
+    )
+    if ranking.outcome != "ok":
+        outcome.state = _NO_HOOK[ranking.outcome]
         return
 
-    top = outcome.ranking.top()
+    events.started("draft")
+    top = ranking.top()
     request = DraftRequest(
         prospect=prospect,
         contact=contact,
@@ -241,5 +305,17 @@ async def _stages(
         today=today,
     )
     draft = await _best_draft(deps.writer, request)
+    events.done(f"best of {DRAFT_VARIANTS} variants: {len(draft.body.split())} words")
+
+    events.started("fact_check")
     outcome.draft, outcome.problems = await _fact_check(draft, request, deps)
+    events.done(f"{len(outcome.problems)} problem(s) remain" if outcome.problems else "all clear")
     outcome.state = RunState.DRAFT_HELD if outcome.problems else RunState.DRAFT_READY
+
+
+def _describe_identity(identity: Identity) -> str:
+    c = identity.contact
+    who = f"{c.person_name or 'company only'} at {c.company_name}" if c else ""
+    if identity.candidates:
+        who = f"{len(identity.candidates)} candidates"
+    return f"{identity.status.value}: {who}" if who else identity.status.value
