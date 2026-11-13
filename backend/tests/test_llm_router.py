@@ -126,3 +126,10 @@ async def test_rate_limited_provider_is_skipped_until_its_cooldown_ends():
     clock[0] += 120
     await router.structured("checker", "q3", Verdict)  # cooldown over -> groq tried again
     assert calls == ["groq.test", "gemini.test", "gemini.test", "groq.test", "gemini.test"]
+
+
+def test_a_role_without_any_configured_provider_is_reported_missing():
+    router = LLMRouter({"checker": [GROQ], "writer": []})
+    assert router.has_role("checker")
+    assert not router.has_role("writer")
+    assert not router.has_role("judge")

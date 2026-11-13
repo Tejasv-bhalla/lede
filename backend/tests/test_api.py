@@ -38,7 +38,7 @@ async def client(tmp_path, world) -> AsyncIterator[httpx.AsyncClient]:
     app = create_app(
         Settings(demo_access_code=SecretStr(CODE)),
         store=store,
-        deps_factory=lambda: world["deps"](),
+        deps_factory=lambda tier: world["deps"](),
         today=lambda: TODAY,
     )
     async with httpx.AsyncClient(
@@ -392,3 +392,14 @@ async def test_export_is_a_csv_of_approved_drafts_with_the_seller_footer(client)
     assert rows[0]["body"].endswith("Reply STOP to opt out.")
     assert rows[0]["hook"] == PODCAST_QUOTE.claim
     assert rows[0]["hook_url"] == "https://pod.example/ep41"
+
+
+async def test_health_check_is_public_and_never_touches_the_database(tmp_path):
+    store = Store(f"sqlite:///{tmp_path / 'never-created.db'}")  # tables never created
+    app = create_app(Settings(demo_access_code=SecretStr(CODE)), store=store)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as c:
+        r = await c.get("/api/health")
+    assert (r.status_code, r.json()) == (200, {"ok": True, "runs_enabled": False})
+    await store.dispose()

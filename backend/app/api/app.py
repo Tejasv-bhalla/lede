@@ -7,6 +7,7 @@ import hmac
 import io
 import json
 from collections.abc import AsyncIterator, Callable
+from contextlib import AbstractAsyncContextManager
 from dataclasses import asdict
 from datetime import date
 from typing import Annotated, Any
@@ -34,6 +35,7 @@ from app.pipeline.run import PipelineDeps
 from app.services.runs import DraftRejected, NotFound, NotReady, ReviewAction, RunService
 
 MAX_CSV_BYTES = 1_000_000
+Lifespan = Callable[[FastAPI], AbstractAsyncContextManager[None]]
 
 
 class CodeCheck(BaseModel):
@@ -61,6 +63,12 @@ StoreDep = Annotated[Store, Depends(_store)]
 
 public = APIRouter(prefix="/api")
 api = APIRouter(prefix="/api", dependencies=[Depends(_require_code)])
+
+
+@public.get("/health")
+async def health(request: Request) -> dict[str, bool]:
+    """For the uptime pinger. Deliberately database-free, so pings don't keep Neon awake."""
+    return {"ok": True, "runs_enabled": request.app.state.runs is not None}
 
 
 @public.post("/auth/check")
@@ -322,10 +330,11 @@ def create_app(
     settings: Settings,
     *,
     store: Store,
-    deps_factory: Callable[[], PipelineDeps] | None = None,
+    deps_factory: Callable[[Tier], PipelineDeps] | None = None,
     today: Callable[[], date] = date.today,
+    lifespan: Lifespan | None = None,
 ) -> FastAPI:
-    app = FastAPI(title="Signal to Draft", version="0.1.0")
+    app = FastAPI(title="Signal to Draft", version="0.1.0", lifespan=lifespan)
     app.state.settings = settings
     app.state.store = store
     app.state.runs = RunService(store, deps_factory, today) if deps_factory else None

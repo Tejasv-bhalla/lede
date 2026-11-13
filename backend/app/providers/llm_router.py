@@ -78,6 +78,9 @@ class LLMRouter:
         self._usage_sinks: list[Callable[[UsageRecord], None]] = []
         self.clock: Callable[[], float] = time.monotonic
 
+    def has_role(self, role: str) -> bool:
+        return bool(self._routes.get(role))
+
     def on_usage(self, sink: Callable[[UsageRecord], None]) -> None:
         self._usage_sinks.append(sink)
 

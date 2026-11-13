@@ -107,7 +107,7 @@ class RunService:
     def __init__(
         self,
         store: Store,
-        deps_factory: Callable[[], PipelineDeps],
+        deps_factory: Callable[[Tier], PipelineDeps],
         today: Callable[[], date],
     ) -> None:
         self._store = store
@@ -174,7 +174,7 @@ class RunService:
             outcome = await run_prospect(
                 prospect,
                 brief,
-                self._deps_factory(),
+                self._deps_factory(tier),
                 rules=rules,
                 today=self._today(),
                 budget=TIER_BUDGETS[tier],
