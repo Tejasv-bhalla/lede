@@ -261,10 +261,14 @@ a while; a run only fails when every model for a job is unavailable.
 
 | Job | What it does | Free default chain |
 |---|---|---|
-| Writing (`writer`) | Writes and revises the email. The biggest effect on quality. | Gemini 3.8 Flash → GPT-OSS 120B (Groq) → Qwen 3.8 27B (Groq) → Mistral Medium → Gemini 3.5 Flash-Lite → GPT-OSS 20B |
-| Judging (`judge`) | Plans research, confirms identity, scores openers. | GPT-OSS 120B → Qwen 3.8 27B → Gemini 3.8 Flash → Gemini 3.5 Flash-Lite → GPT-OSS 20B → Mistral Medium |
-| Fact-checking (`checker`) | Checks claims against quotes and the draft against evidence; ideally a different family from the writer. | Qwen 3.8 27B → Gemini 3.5 Flash-Lite → GPT-OSS 20B → GPT-OSS 120B → Gemini 3.8 Flash → Mistral Small |
-| Reading (`reader`) | Pulls facts out of every page read (the most calls). | Gemini 3.5 Flash-Lite → GPT-OSS 20B → Qwen 3.8 27B → Mistral Small |
+| Writing (`writer`) | Writes and revises the email. The biggest effect on quality. | Gemini 3.8 Flash → Gemini 3.7 Flash → GPT-OSS 120B (Groq) → Gemini 3.6 Flash → Qwen 3.8 27B (Groq) → Mistral Medium → Gemini 3.5 Flash → Gemini 3.5 Flash-Lite → Gemini 3.1 Flash-Lite → GPT-OSS 20B |
+| Judging (`judge`) | Plans research, confirms identity, scores openers. | GPT-OSS 120B → Qwen 3.8 27B → Gemini 3.8 Flash → Gemini 3.7 Flash → Gemini 3.6 Flash → Gemini 3.5 Flash-Lite → GPT-OSS 20B → Gemini 3.1 Flash-Lite → Mistral Medium |
+| Fact-checking (`checker`) | Checks claims against quotes and the draft against evidence; ideally a different family from the writer. | Qwen 3.8 27B → Gemini 3.5 Flash-Lite → Gemini 3.1 Flash-Lite → GPT-OSS 20B → GPT-OSS 120B → Gemini 3.6 Flash → Gemini 3.8 Flash → Mistral Small |
+| Reading (`reader`) | Pulls facts out of every page read (the most calls). | Gemini 3.5 Flash-Lite → Gemini 3.1 Flash-Lite → GPT-OSS 20B → Qwen 3.8 27B → Mistral Small |
+
+Free allowances are per model (for example Gemini 3.8 Flash and 3.7 Flash allow 20 requests a day
+each), so spreading each job across many models multiplies the free capacity. Models without a key
+in `.env` are skipped.
 
 **Bring your own model.** On the Models page, save a key for Anthropic, OpenAI, Gemini, Groq,
 OpenRouter or any OpenAI-compatible endpoint (for example a local Ollama), then choose a provider
