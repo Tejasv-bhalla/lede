@@ -9,7 +9,7 @@ from app.pipeline.hooks import RankedHook
 from app.pipeline.ports import Draft, DraftRequest
 from app.providers.llm_router import LLMRouter
 
-PROMPT_VERSION = "writer-v1"
+PROMPT_VERSION = "writer-v2"
 
 RECENT_OK = "You may say it is recent."
 NOT_RECENT = (
@@ -35,6 +35,7 @@ def _evidence(hook: RankedHook) -> str:
 
 def _brief(r: DraftRequest) -> str:
     b, c = r.brief, r.contact
+    greeting = "" if c.person_name else ' (no named person: start with "Hi,")'
     claims = "\n".join(f"- {cl.text}" for cl in b.claims) or "- (none: make no product claims)"
     never = "; ".join(r.rules.never_claims) or "none"
     banned = "; ".join(r.rules.banned_phrases)
@@ -51,9 +52,15 @@ OTHER VERIFIED FACTS (optional, cite if used):
 {chr(10).join(_evidence(h) for h in r.alternates) or "(none)"}
 
 RULES:
+- You are writing TO the recipient. Start with their first name and a comma{greeting}. Refer
+  to their company as "you", "your team" or by name, never as a third party they might not
+  know about (not "{c.company_name} announced...", but "your team announced...").
 - At most {r.rules.max_words} words, 3-4 short sentences, plain and warm. No buzzwords.
 - Structure: the observation; why it made you think of them; one line linking to the seller's
   product using an approved claim; a low-pressure question as the ask.
+- The ask must match the seller's objective exactly. Don't invent extras (other attendees,
+  events, resources, discounts). Don't assume their problems: say what is common for teams
+  like theirs, or ask.
 - State only what the cited quotes say. Do not invent numbers, results, customers or dates.
 - {RECENT_OK if r.rules.recency_allowed else NOT_RECENT}
 - Never mention family, health or private matters. No links. No "I hope this finds you well".

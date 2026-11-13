@@ -37,9 +37,10 @@ ROLE_CHAINS: dict[Role, list[tuple[str, str]]] = {
         ("groq", "qwen/qwen3.8-27b"),
         ("mistral", "mistral-medium-latest"),
     ],
-    "reader": [
+    "reader": [  # the busiest role (one call per page): spread across separate allowances
         ("gemini", "gemini-3.5-flash-lite"),
         ("groq", "openai/gpt-oss-20b"),
+        ("groq", "qwen/qwen3.8-27b"),
         ("mistral", "mistral-small-latest"),
     ],
     "checker": [  # a different model family from the writer's usual models
