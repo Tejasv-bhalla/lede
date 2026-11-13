@@ -126,6 +126,16 @@ async def put_campaign(campaign_id: str, campaign: Campaign, store: StoreDep) ->
     return data
 
 
+@api.delete("/campaigns/{campaign_id}", status_code=204)
+async def delete_campaign(campaign_id: str, store: StoreDep) -> None:
+    """Delete a campaign with its prospects, runs and drafts. Cannot be undone."""
+    result = await store.delete_campaign(campaign_id)
+    if result == "missing":
+        raise HTTPException(404, f"No campaign '{campaign_id}'.")
+    if result == "running":
+        raise HTTPException(409, "A run in this campaign is still running; delete it when done.")
+
+
 async def _profile(store: Store) -> SellerProfile:
     data = await store.get_profile()
     if data is None:

@@ -1,7 +1,9 @@
+import asyncio
 import csv
 import io
 import json
 from collections.abc import AsyncIterator, Callable
+from dataclasses import replace
 
 import httpx
 import pytest
@@ -12,6 +14,7 @@ from app.config import Settings
 from app.db.store import Store
 from app.pipeline.ports import Draft, Identity, IdentityStatus
 from app.pipeline.run import PipelineDeps
+from tests.fakes import FakeResolver
 from tests.scenario import PODCAST_QUOTE, PRIYA, TODAY, deps
 
 CODE = "open-sesame"
@@ -98,6 +101,48 @@ async def test_campaigns_are_created_listed_read_and_updated(client):
     assert (body["id"], body["angle"]) == (cid, "audit season is coming")
 
     assert (await client.get("/api/campaigns/nope", headers=AUTH)).status_code == 404
+
+
+async def test_deleting_a_campaign_removes_its_prospects_runs_and_drafts_only(client):
+    doomed = await finished_run(client)
+    doomed_cid = (await client.get(f"/api/runs/{doomed}", headers=AUTH)).json()["campaign_id"]
+    kept = await finished_run(client)
+
+    r = await client.delete(f"/api/campaigns/{doomed_cid}", headers=AUTH)
+
+    assert r.status_code == 204
+    assert (await client.get(f"/api/campaigns/{doomed_cid}", headers=AUTH)).status_code == 404
+    assert (await client.get(f"/api/runs/{doomed}", headers=AUTH)).status_code == 404
+    assert (await client.get(f"/api/runs/{kept}", headers=AUTH)).status_code == 200
+    assert [c["id"] for c in (await client.get("/api/campaigns", headers=AUTH)).json()] != []
+    assert (await client.delete(f"/api/campaigns/{doomed_cid}", headers=AUTH)).status_code == 404
+
+
+class StuckResolver(FakeResolver):
+    """Holds the run at its first stage until the test lets it go."""
+
+    def __init__(self, identity):
+        super().__init__(identity)
+        self.release = asyncio.Event()
+
+    async def resolve(self, prospect, brief):
+        await self.release.wait()
+        return await super().resolve(prospect, brief)
+
+
+async def test_a_campaign_with_a_run_in_progress_cannot_be_deleted(client, world):
+    stuck = StuckResolver(Identity(IdentityStatus.CONFIRMED, contact=PRIYA))
+    world["deps"] = lambda: replace(deps(scores={PODCAST_QUOTE.claim: 4.5}), resolver=stuck)
+    cid, pid = await ready_prospect(client)
+    run_id = await start_run(client, prospect_id=pid, tier="standard")
+
+    r = await client.delete(f"/api/campaigns/{cid}", headers=AUTH)
+    assert r.status_code == 409
+    assert "running" in r.json()["detail"]
+
+    stuck.release.set()
+    await events_of(client, run_id)
+    assert (await client.delete(f"/api/campaigns/{cid}", headers=AUTH)).status_code == 204
 
 
 async def test_validating_a_campaign_reports_conflicts_with_the_profile(client):

@@ -7,10 +7,21 @@ so the schema evolves with the models; only the fields we filter on are real col
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import TypeAdapter
-from sqlalchemy import JSON, DateTime, Float, ForeignKey, Integer, String, func, select, update
+from sqlalchemy import (
+    JSON,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    delete,
+    func,
+    select,
+    update,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -192,6 +203,23 @@ class Store:
                 return False
             row.data = data
             return True
+
+    async def delete_campaign(self, campaign_id: str) -> Literal["deleted", "missing", "running"]:
+        """Delete a campaign with its prospects and runs, unless a run is still going."""
+        async with self.session() as s, s.begin():
+            if await s.get(CampaignRow, campaign_id) is None:
+                return "missing"
+            running = await s.scalar(
+                select(func.count())
+                .select_from(RunRow)
+                .where(RunRow.campaign_id == campaign_id, RunRow.state == "RUNNING")
+            )
+            if running:
+                return "running"
+            await s.execute(delete(RunRow).where(RunRow.campaign_id == campaign_id))
+            await s.execute(delete(ProspectRow).where(ProspectRow.campaign_id == campaign_id))
+            await s.execute(delete(CampaignRow).where(CampaignRow.id == campaign_id))
+            return "deleted"
 
     # ── prospects ─────────────────────────────────────────────────────────────
 
