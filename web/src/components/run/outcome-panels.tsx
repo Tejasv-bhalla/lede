@@ -1,10 +1,13 @@
 import { ExternalLink, UserRoundCheck } from 'lucide-react'
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 
 import { useStartRun } from '@/api/hooks'
 import type { Contact, RunDetail, Tier } from '@/api/types'
+import { Field } from '@/components/field'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { STATE } from '@/lib/status'
 
 import { Problem } from './problem'
@@ -31,58 +34,122 @@ function usePinnedRun(run: RunDetail) {
   }
 }
 
-/** Ambiguous person, or a company-only prospect: the rep picks who to write to. */
+/** Ambiguous person, or a company-only prospect: the rep picks who to write to, or names them. */
 export function ClarificationPicker({ run }: { run: RunDetail }) {
   const pinned = usePinnedRun(run)
   const identity = run.outcome?.identity
   const candidates = identity?.candidates ?? []
-  const suggested = identity?.status === 'suggested'
+  const company = run.prospect.company_name
+  const [title, intro] =
+    identity?.status === 'ambiguous'
+      ? [
+          'Which of these is your prospect?',
+          'More than one person matches. Pick the right one so we never write about a stranger.',
+        ]
+      : candidates.length
+        ? [
+            'Who should we write to?',
+            `We found people at ${company} who match this campaign's buyer. Pick one and research starts.`,
+          ]
+        : [
+            'Who should we write to?',
+            `We could not find anyone at ${company} in this campaign's buyer roles. Add the person you want to reach and research starts.`,
+          ]
 
   return (
     <section className="max-w-3xl">
-      <h2>{suggested ? 'Who should we write to?' : 'Which of these is your prospect?'}</h2>
-      <p className="mt-1 mb-5 text-muted-foreground">
-        {suggested
-          ? `We found people at ${run.prospect.company_name} who match this campaign's buyer. Pick one and research starts.`
-          : 'More than one person matches. Pick the right one so we never write about a stranger.'}
-      </p>
-      <ul className="grid gap-3 sm:grid-cols-2">
-        {candidates.map((c) => (
-          <li
-            key={`${c.person_name}-${c.company_name}`}
-            className="flex flex-col rounded-lg border bg-card p-4"
-          >
-            <p className="font-medium">{c.person_name}</p>
-            <p className="text-sm text-muted-foreground">
-              {[c.title, c.company_name].filter(Boolean).join(' at ')}
-            </p>
-            {c.evidence_quote && (
-              <blockquote className="mt-3 font-serif text-sm leading-relaxed">
-                “{c.evidence_quote}”
-              </blockquote>
-            )}
-            {c.evidence_url && (
-              <a
-                href={c.evidence_url}
-                target="_blank"
-                rel="noreferrer"
-                className="mt-1.5 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-              >
-                {host(c.evidence_url)} <ExternalLink className="size-3" />
-              </a>
-            )}
-            <Button
-              className="mt-4 self-start"
-              size="sm"
-              disabled={pinned.pending}
-              onClick={() => pinned.go(c)}
+      <h2>{title}</h2>
+      <p className="mt-1 mb-5 text-muted-foreground">{intro}</p>
+      {candidates.length > 0 && (
+        <ul className="mb-8 grid gap-3 sm:grid-cols-2">
+          {candidates.map((c) => (
+            <li
+              key={`${c.person_name}-${c.company_name}`}
+              className="flex flex-col rounded-lg border bg-card p-4"
             >
-              <UserRoundCheck className="size-4" /> Write to {c.person_name?.split(' ')[0]}
-            </Button>
-          </li>
-        ))}
-      </ul>
+              <p className="font-medium">{c.person_name}</p>
+              <p className="text-sm text-muted-foreground">
+                {[c.title, c.company_name].filter(Boolean).join(' at ')}
+              </p>
+              {c.evidence_quote && (
+                <blockquote className="mt-3 font-serif text-sm leading-relaxed">
+                  “{c.evidence_quote}”
+                </blockquote>
+              )}
+              {c.evidence_url && (
+                <a
+                  href={c.evidence_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-1.5 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                >
+                  {host(c.evidence_url)} <ExternalLink className="size-3" />
+                </a>
+              )}
+              <Button
+                className="mt-4 self-start"
+                size="sm"
+                disabled={pinned.pending}
+                onClick={() => pinned.go(c)}
+              >
+                <UserRoundCheck className="size-4" /> Write to {c.person_name?.split(' ')[0]}
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <ContactForm
+        heading={candidates.length ? 'Someone else' : undefined}
+        pending={pinned.pending}
+        onSubmit={(person_name, title) =>
+          pinned.go({
+            company_name: company,
+            company_domain: run.prospect.company_domain ?? null,
+            person_name,
+            title: title || null,
+            evidence_url: null,
+            evidence_quote: null,
+          })
+        }
+      />
     </section>
+  )
+}
+
+function ContactForm({
+  heading,
+  pending,
+  onSubmit,
+}: {
+  heading?: string
+  pending: boolean
+  onSubmit: (name: string, title: string) => void
+}) {
+  const [name, setName] = useState('')
+  const [title, setTitle] = useState('')
+  return (
+    <form
+      className="flex flex-col gap-4 rounded-lg border bg-card p-4"
+      onSubmit={(e) => {
+        e.preventDefault()
+        if (name.trim()) onSubmit(name.trim(), title.trim())
+      }}
+    >
+      {heading && <h3 className="text-sm font-medium">{heading}</h3>}
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field label="Name">
+          {(id) => (
+            <Input id={id} required value={name} onChange={(e) => setName(e.target.value)} />
+          )}
+        </Field>
+        <Field label="Job title" hint="Optional.">
+          {(id) => <Input id={id} value={title} onChange={(e) => setTitle(e.target.value)} />}
+        </Field>
+      </div>
+      <Button type="submit" size="sm" className="self-start" disabled={pending || !name.trim()}>
+        <UserRoundCheck className="size-4" /> Write to {name.trim().split(' ')[0] || 'them'}
+      </Button>
+    </form>
   )
 }
 
