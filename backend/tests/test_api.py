@@ -8,7 +8,7 @@ from pydantic import SecretStr
 from app.api.app import create_app
 from app.config import Settings
 from app.db.store import Store
-from app.pipeline.ports import Identity, IdentityStatus
+from app.pipeline.ports import Draft, Identity, IdentityStatus
 from app.pipeline.run import PipelineDeps
 from tests.scenario import PODCAST_QUOTE, PRIYA, TODAY, deps
 
@@ -292,3 +292,63 @@ async def test_starting_a_run_needs_a_known_prospect_and_a_seller_profile(client
     ).json()["id"]
     r = await client.post("/api/runs", json={"prospect_id": pid, "tier": "quick"}, headers=AUTH)
     assert r.status_code == 409
+
+
+# ── review ───────────────────────────────────────────────────────────────────
+
+
+async def finished_run(client) -> str:
+    _, pid = await ready_prospect(client)
+    run_id = await start_run(client, prospect_id=pid, tier="standard")
+    await events_of(client, run_id)
+    return run_id
+
+
+async def review(client, run_id: str, **body):
+    return await client.post(f"/api/runs/{run_id}/review", json=body, headers=AUTH)
+
+
+async def test_the_rep_approves_a_ready_draft(client):
+    run_id = await finished_run(client)
+    assert (await review(client, run_id, action="approve")).status_code == 200
+
+    run = (await client.get(f"/api/runs/{run_id}", headers=AUTH)).json()
+    assert run["review"]["state"] == "APPROVED"
+    assert run["review"]["draft"]["subject"] == "Closing the books faster"
+
+
+SALESY = Draft(subject="Hi", body="I hope this finds you well. Ledgerly is a game-changer.")
+
+
+async def test_a_held_draft_must_be_edited_clean_before_it_can_be_approved(client, world):
+    world["deps"] = lambda: deps(scores={PODCAST_QUOTE.claim: 4.5}, drafts=(SALESY,))
+    run_id = await finished_run(client)
+
+    refused = await review(client, run_id, action="approve")
+    assert refused.status_code == 409
+
+    still_bad = await review(client, run_id, action="edit", subject="Hi", body=SALESY.body)
+    assert still_bad.status_code == 422
+    assert "banned_phrase" in still_bad.text
+
+    clean = "Priya, closing the books faster is your stated priority. Worth a short look?"
+    edited = await review(client, run_id, action="edit", subject="Month-end", body=clean)
+    assert edited.status_code == 200
+    run = (await client.get(f"/api/runs/{run_id}", headers=AUTH)).json()
+    assert run["review"]["state"] == "APPROVED_WITH_EDITS"
+    assert run["review"]["draft"]["body"] == clean
+
+
+async def test_rejecting_a_draft_needs_a_reason(client):
+    run_id = await finished_run(client)
+    assert (await review(client, run_id, action="reject")).status_code == 422
+
+    assert (await review(client, run_id, action="reject", reason="wrong person")).status_code == 200
+    run = (await client.get(f"/api/runs/{run_id}", headers=AUTH)).json()
+    assert (run["review"]["state"], run["review"]["reason"]) == ("REJECTED", "wrong person")
+
+
+async def test_runs_without_a_draft_cannot_be_reviewed(client, world):
+    world["deps"] = lambda: deps(scores={PODCAST_QUOTE.claim: 1.0})
+    run_id = await finished_run(client)
+    assert (await review(client, run_id, action="approve")).status_code == 409

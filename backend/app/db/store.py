@@ -70,6 +70,7 @@ class RunRow(Base):
     inputs: Mapped[dict[str, Any]] = mapped_column(Json)  # prospect, brief, pinned identity
     outcome: Mapped[dict[str, Any] | None] = mapped_column(Json, nullable=True)
     events: Mapped[list[dict[str, Any]]] = mapped_column(Json, default=list)
+    review: Mapped[dict[str, Any] | None] = mapped_column(Json, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -80,6 +81,7 @@ class RunRow(Base):
             "prospect_id": self.prospect_id,
             "tier": self.tier,
             "state": self.state,
+            "review_state": self.review["state"] if self.review else None,
             "prospect": self.inputs["prospect"],
             "created_at": self.created_at.isoformat(),
             "finished_at": self.finished_at.isoformat() if self.finished_at else None,
@@ -221,4 +223,11 @@ class Store:
                 "pinned_identity": row.inputs.get("pinned_identity"),
                 "outcome": row.outcome,
                 "events": list(row.events),
+                "review": row.review,
             }
+
+    async def save_review(self, run_id: str, review: dict[str, Any]) -> None:
+        async with self.session() as s, s.begin():
+            row = await s.get(RunRow, run_id)
+            assert row is not None
+            row.review = review

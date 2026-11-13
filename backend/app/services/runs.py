@@ -10,18 +10,25 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator, Callable
 from dataclasses import asdict, dataclass, field
-from datetime import date
-from typing import Any
+from datetime import UTC, date, datetime
+from typing import Any, Literal
 from uuid import uuid4
 
 from pydantic import TypeAdapter
 
 from app.context.merge import MergedBrief, merge_brief
 from app.db.store import Store
-from app.domain.models import Campaign, ProspectInput, RunState, SellerProfile, Tier
-from app.pipeline.ports import Contact
+from app.domain.models import (
+    Campaign,
+    ProspectInput,
+    ReviewState,
+    RunState,
+    SellerProfile,
+    Tier,
+)
+from app.pipeline.ports import Contact, Draft
 from app.pipeline.run import PipelineDeps, RunOutcome, StageEvent, run_prospect
-from app.policy.draft_rules import DEFAULT_BANNED_PHRASES, DraftRules
+from app.policy.draft_rules import DEFAULT_BANNED_PHRASES, DraftRules, check_draft
 from app.research.loop import Budget
 
 log = logging.getLogger(__name__)
@@ -34,6 +41,7 @@ TIER_BUDGETS: dict[Tier, Budget] = {
 
 _OUTCOME = TypeAdapter(RunOutcome)
 _BRIEF = TypeAdapter(MergedBrief)
+_RULES = TypeAdapter(DraftRules)
 
 
 class NotFound(LookupError):
@@ -42,6 +50,17 @@ class NotFound(LookupError):
 
 class NotReady(RuntimeError):
     """A precondition the rep must fix first (e.g. no seller profile)."""
+
+
+class DraftRejected(ValueError):
+    """An edited draft breaks the run's rules."""
+
+    def __init__(self, violations: list[str]) -> None:
+        super().__init__("; ".join(violations))
+        self.violations = violations
+
+
+ReviewAction = Literal["approve", "edit", "reject"]
 
 
 def draft_rules_for(profile: SellerProfile) -> DraftRules:
@@ -199,3 +218,39 @@ class RunService:
         if live is not None:
             run["events"] = list(live.events)
         return run
+
+    async def review(
+        self,
+        run_id: str,
+        action: ReviewAction,
+        *,
+        draft: Draft | None = None,
+        reason: str | None = None,
+    ) -> dict[str, Any]:
+        """Record the rep's decision. Only clean drafts can be approved; edits are re-checked
+        against the run's rules (the rep owns any new factual claims they type)."""
+        run = await self.detail(run_id)
+        outcome = run["outcome"] or {}
+        if not outcome.get("draft"):
+            raise NotReady("This run has no draft to review.")
+        current = Draft(**outcome["draft"])
+        kept, state = current, ReviewState.REJECTED
+        if action == "approve":
+            if run["state"] != RunState.DRAFT_READY.value:
+                raise NotReady("This draft has open problems; edit it before approving.")
+            state = ReviewState.APPROVED
+        elif action == "edit":
+            assert draft is not None
+            rules = _RULES.validate_python(outcome["rules"])
+            violations = [f"{v.kind}: {v.detail}" for v in check_draft(draft.body, rules)]
+            if violations:
+                raise DraftRejected(violations)
+            kept, state = draft, ReviewState.APPROVED_WITH_EDITS
+        review: dict[str, Any] = {
+            "state": state.value,
+            "draft": asdict(kept),
+            "reason": reason if state is ReviewState.REJECTED else None,
+            "at": datetime.now(UTC).isoformat(),
+        }
+        await self._store.save_review(run_id, review)
+        return review

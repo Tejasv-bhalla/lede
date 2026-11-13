@@ -11,7 +11,7 @@ from datetime import date
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Request, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from sse_starlette import EventSourceResponse
 
 from app.batch.csv_import import CsvFormatError, read_prospects
@@ -19,9 +19,9 @@ from app.config import Settings
 from app.context.merge import merge_brief
 from app.db.store import Store
 from app.domain.models import Campaign, ProspectInput, RunState, SellerProfile, Tier
-from app.pipeline.ports import Contact
+from app.pipeline.ports import Contact, Draft
 from app.pipeline.run import PipelineDeps
-from app.services.runs import NotFound, NotReady, RunService
+from app.services.runs import DraftRejected, NotFound, NotReady, ReviewAction, RunService
 
 MAX_CSV_BYTES = 1_000_000
 
@@ -216,6 +216,34 @@ async def run_events(run_id: str, runs: RunsDep) -> EventSourceResponse:
             yield {"event": "stage", "data": json.dumps(event)}
 
     return EventSourceResponse(stream(), ping=15)
+
+
+class ReviewRequest(BaseModel):
+    action: ReviewAction
+    subject: str | None = None
+    body: str | None = None
+    reason: str | None = None
+
+    @model_validator(mode="after")
+    def _fields_for_action(self) -> ReviewRequest:
+        if self.action == "edit" and not (self.subject and self.body):
+            raise ValueError("An edit needs both a subject and a body.")
+        if self.action == "reject" and not (self.reason and self.reason.strip()):
+            raise ValueError("Say why the draft is rejected; it trains future runs.")
+        return self
+
+
+@api.post("/runs/{run_id}/review")
+async def review_run(run_id: str, body: ReviewRequest, runs: RunsDep) -> dict[str, Any]:
+    edited = Draft(subject=body.subject, body=body.body) if body.subject and body.body else None
+    try:
+        return await runs.review(run_id, body.action, draft=edited, reason=body.reason)
+    except NotFound as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except NotReady as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except DraftRejected as exc:
+        raise HTTPException(422, {"violations": exc.violations}) from exc
 
 
 def create_app(

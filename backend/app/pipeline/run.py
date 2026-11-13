@@ -79,6 +79,7 @@ class RunOutcome:
     research: ResearchResult | None = None
     ranking: HookRanking | None = None
     draft: Draft | None = None
+    rules: DraftRules | None = None  # the per-run rules the draft was checked against
     problems: list[str] = field(default_factory=list)  # what blocks approval of a held draft
     notes: list[str] = field(default_factory=list)
 
@@ -305,6 +306,7 @@ async def _stages(
         rules=_rules_for(rules, top[0].evidence, ledger, brief, today),
         today=today,
     )
+    outcome.rules = request.rules
     draft = await _best_draft(deps.writer, request)
     events.done(f"best of {DRAFT_VARIANTS} variants: {len(draft.body.split())} words")
 
