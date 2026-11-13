@@ -8,6 +8,7 @@ from app.domain.models import (
     About,
     Campaign,
     CompanyInfo,
+    Entailment,
     Offer,
     Persona,
     Priority,
@@ -497,3 +498,9 @@ async def test_one_page_cannot_fill_the_shortlist():
     scored = set(d.scorer.scored)  # type: ignore[attr-defined]
     assert RAISE.claim in scored
     assert len(scored & {c.claim for c in same_page}) == 2
+
+
+async def test_the_final_claim_by_claim_verdicts_are_kept_for_the_reviewer():
+    d = deps(drafts=(DRAFT_WITH_INVENTED_METRIC,), unsupported_sentences=(INVENTED,))
+    outcome = await run(d)
+    assert [(c.claim, c.verdict) for c in outcome.claims] == [(INVENTED, Entailment.UNSUPPORTED)]

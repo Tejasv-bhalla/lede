@@ -89,6 +89,7 @@ class RunOutcome:
     ranking: HookRanking | None = None
     draft: Draft | None = None
     rules: DraftRules | None = None  # the per-run rules the draft was checked against
+    claims: list[ClaimVerdict] = field(default_factory=list)  # last fact-check, claim by claim
     problems: list[str] = field(default_factory=list)  # what blocks approval of a held draft
     notes: list[str] = field(default_factory=list)
 
@@ -215,16 +216,16 @@ def _problems(draft: Draft, verdicts: list[ClaimVerdict], rules: DraftRules) -> 
 
 async def _fact_check(
     draft: Draft, request: DraftRequest, deps: PipelineDeps
-) -> tuple[Draft, list[str]]:
+) -> tuple[Draft, list[str], list[ClaimVerdict]]:
     """S7: check claim by claim; send problems back for a minimal fix, at most MAX_REVISIONS.
 
-    Returns the final draft and whatever problems remain after the last attempt.
+    Returns the final draft, whatever problems remain, and the last claim-by-claim verdicts.
     """
     for attempt in range(MAX_REVISIONS + 1):
         verdicts = await deps.fact_checker.check(draft, request)
         problems = _problems(draft, verdicts, request.rules)
         if not problems or attempt == MAX_REVISIONS:
-            return draft, problems
+            return draft, problems, verdicts
         draft = await deps.writer.revise(draft, problems, request)
     raise AssertionError("unreachable")
 
@@ -379,7 +380,7 @@ async def _stages(
     events.done(f"best of {DRAFT_VARIANTS} variants: {len(draft.body.split())} words")
 
     events.started("fact_check")
-    outcome.draft, outcome.problems = await _fact_check(draft, request, deps)
+    outcome.draft, outcome.problems, outcome.claims = await _fact_check(draft, request, deps)
     events.done(f"{len(outcome.problems)} problem(s) remain" if outcome.problems else "all clear")
     outcome.state = RunState.DRAFT_HELD if outcome.problems else RunState.DRAFT_READY
 
