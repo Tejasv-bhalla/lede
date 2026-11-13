@@ -261,3 +261,68 @@ async def test_a_provider_rejecting_its_own_malformed_json_gets_the_corrective_r
     result = await router.structured("checker", "q", Verdict)
     assert result.provider == "groq"
     assert "did not match the required schema" in seen[1]
+
+
+# ── Anthropic (Claude) through the official SDK ───────────────────────────────
+
+CLAUDE = Provider(
+    name="anthropic:claude", base_url="", api_key="k3", model="claude-opus-5-5", kind="anthropic"
+)
+
+
+def claude_message(content: str) -> httpx.Response:
+    return httpx.Response(
+        200,
+        json={
+            "id": "msg_1",
+            "type": "message",
+            "role": "assistant",
+            "model": "claude-opus-5-5",
+            "content": [{"type": "text", "text": content}],
+            "stop_reason": "end_turn",
+            "stop_sequence": None,
+            "usage": {"input_tokens": 200, "output_tokens": 40},
+        },
+    )
+
+
+async def test_claude_answers_through_the_same_router_with_usage_reported():
+    seen: list[str] = []
+    usage = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen.append(req.url.path)
+        return claude_message(VALID)
+
+    router = router_with(handler, {"writer": [CLAUDE, GROQ]})
+    router.on_usage(usage.append)
+    result = await router.structured("writer", "Is the claim supported?", Verdict)
+
+    assert result.value == Verdict(supported=True, reason="quote says so")
+    assert (result.provider, result.model) == ("anthropic:claude", "claude-opus-5-5")
+    assert seen == ["/v1/messages"]
+    assert (usage[0].prompt_tokens, usage[0].completion_tokens) == (200, 40)
+
+
+@pytest.mark.parametrize("status", [429, 529])
+async def test_a_busy_or_rate_limited_claude_falls_back_to_the_free_models(status):
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.url.path == "/v1/messages":
+            return httpx.Response(status, json={"type": "error", "error": {"type": "x"}})
+        return completion(VALID)
+
+    router = router_with(handler, {"writer": [CLAUDE, GROQ]})
+    result = await router.structured("writer", "Is the claim supported?", Verdict)
+    assert result.provider == "groq"
+
+
+async def test_a_bad_claude_key_falls_back_without_resting_the_free_models():
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.url.path == "/v1/messages":
+            return httpx.Response(
+                401, json={"type": "error", "error": {"type": "authentication_error"}}
+            )
+        return completion(VALID)
+
+    router = router_with(handler, {"writer": [CLAUDE, GROQ]})
+    assert (await router.structured("writer", "q", Verdict)).provider == "groq"
