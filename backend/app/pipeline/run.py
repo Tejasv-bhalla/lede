@@ -13,7 +13,15 @@ from datetime import date
 from typing import Literal
 
 from app.context.merge import MergedBrief
-from app.domain.models import Entailment, Evidence, Priority, ProspectInput, RunState
+from app.domain.models import (
+    About,
+    Entailment,
+    Evidence,
+    Priority,
+    ProspectInput,
+    RunState,
+    SourceType,
+)
 from app.pipeline.hooks import DimensionScores, HookRanking, rank_hooks, veto_reason
 from app.pipeline.ports import (
     ClaimVerdict,
@@ -36,6 +44,7 @@ from app.research.ports import ResearchTarget
 
 DRAFT_VARIANTS = 2  # best-of-N drafting
 MAX_REVISIONS = 2  # fact-check fix rounds before the draft is held for the rep
+MAX_HOOK_CANDIDATES = 12  # facts checked and scored per run; the rest stay as context
 SCORE_SAMPLES = 2  # independent judge samples per hook, averaged to steady the ranking
 
 # Identity results that stop the run until the rep decides.
@@ -82,6 +91,35 @@ class RunOutcome:
     rules: DraftRules | None = None  # the per-run rules the draft was checked against
     problems: list[str] = field(default_factory=list)  # what blocks approval of a held draft
     notes: list[str] = field(default_factory=list)
+
+
+_PRIORITY_RANK = {Priority.HIGH: 0, Priority.MEDIUM: 1, Priority.LOW: 2}
+_SOURCE_RANK = {
+    SourceType.FIRST_PARTY: 0,
+    SourceType.FILING: 0,
+    SourceType.REP_SUPPLIED: 0,
+    SourceType.PRESS: 1,
+    SourceType.PODCAST_VIDEO: 1,
+    SourceType.JOB_BOARD: 2,
+}
+
+
+def _shortlist(
+    ledger: list[Evidence], brief: MergedBrief, today: date, limit: int
+) -> list[Evidence]:
+    """Pick the facts worth spending AI calls on, using only what code already knows: campaign
+    priority, person before company, source strength, then freshness."""
+
+    def key(e: Evidence) -> tuple[int, int, int, int]:
+        when = e.event_date or e.published_at
+        return (
+            _PRIORITY_RANK.get(brief.signal_priorities.get(e.category, Priority.MEDIUM), 1),
+            0 if e.about is About.PERSON else 1,
+            _SOURCE_RANK.get(e.source_type, 3),
+            (today - when).days if when else 10_000,
+        )
+
+    return sorted((e for e in ledger if veto_reason(e) is None), key=key)[:limit]
 
 
 async def _verify(
@@ -179,6 +217,7 @@ async def run_prospect(
     budget: Budget | None = None,
     pinned: Contact | None = None,
     on_event: Callable[[StageEvent], None] | None = None,
+    max_hook_candidates: int = MAX_HOOK_CANDIDATES,
 ) -> RunOutcome:
     """Run every stage and return the outcome; never raises for model outages.
 
@@ -193,7 +232,16 @@ async def run_prospect(
     if not problems:
         try:
             await _stages(
-                outcome, events, prospect, brief, deps, rules, today, budget or Budget(), pinned
+                outcome,
+                events,
+                prospect,
+                brief,
+                deps,
+                rules,
+                today,
+                budget or Budget(),
+                pinned,
+                max_hook_candidates,
             )
         except LLMUnavailable as exc:
             # Keep whatever earlier stages produced, so a retry or the rep can build on it.
@@ -237,6 +285,7 @@ async def _stages(
     today: date,
     budget: Budget,
     pinned: Contact | None,
+    max_hook_candidates: int,
 ) -> None:
     events.started("identity")
     identity = outcome.identity = (
@@ -273,13 +322,14 @@ async def _stages(
     )
 
     events.started("verify")
-    shortlist = [e for e in research.ledger if veto_reason(e) is None]
+    shortlist = _shortlist(research.ledger, brief, today, max_hook_candidates)
     ledger = research.ledger = await _verify(research.ledger, shortlist, deps.entailment)
     unsupported = sum(e.entailment is Entailment.UNSUPPORTED for e in ledger)
     events.done(f"{len(shortlist)} checked, {unsupported} unsupported")
 
     events.started("score")
-    eligible = [e for e in ledger if veto_reason(e) is None]
+    picked = {e.id for e in shortlist}
+    eligible = [e for e in ledger if e.id in picked and veto_reason(e) is None]
     samples = await _score(eligible, deps.scorer, brief)
     ranking = outcome.ranking = rank_hooks(ledger, samples, weights=brief.hook_weights)
     events.done(

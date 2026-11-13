@@ -39,6 +39,9 @@ TIER_BUDGETS: dict[Tier, Budget] = {
     Tier.DEEP: Budget(max_follow_up_rounds=4, max_searches=40, max_pages=50),
 }
 
+# How many facts each tier spends AI checking and scoring.
+TIER_HOOK_CANDIDATES: dict[Tier, int] = {Tier.QUICK: 6, Tier.STANDARD: 12, Tier.DEEP: 20}
+
 _OUTCOME = TypeAdapter(RunOutcome)
 _BRIEF = TypeAdapter(MergedBrief)
 _RULES = TypeAdapter(DraftRules)
@@ -180,6 +183,7 @@ class RunService:
                 budget=TIER_BUDGETS[tier],
                 pinned=pinned,
                 on_event=on_event,
+                max_hook_candidates=TIER_HOOK_CANDIDATES[tier],
             )
         except Exception:  # a bug, not a model outage: record it instead of hanging viewers
             log.exception("run %s crashed", run_id)

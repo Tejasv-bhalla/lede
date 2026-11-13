@@ -390,3 +390,33 @@ async def test_never_claims_from_the_profile_and_campaign_are_enforced_on_the_dr
 
     assert outcome.state is RunState.DRAFT_HELD
     assert any("never_claim" in p for p in outcome.problems)
+
+
+async def test_only_the_most_promising_facts_are_checked_and_scored_person_level_first():
+    d = deps(scores={PODCAST_QUOTE.claim: 4.5, HIRING.claim: 4.0})
+    outcome = await run(d, max_hook_candidates=1)
+
+    assert d.scorer.scored == [PODCAST_QUOTE.claim] * 2  # type: ignore[attr-defined]
+    assert outcome.research is not None
+    unchecked = [e.claim for e in outcome.research.ledger if e.entailment is None]
+    assert unchecked == [HIRING.claim]
+
+
+async def test_a_signal_the_campaign_marks_high_priority_wins_the_shortlist():
+    campaign = Campaign(
+        id="c1",
+        name="Q4",
+        objective="Book demos",
+        persona_id="fin",
+        signal_priorities={Cat.HIRING_PATTERN: Priority.HIGH},
+    )
+    d = deps(scores={PODCAST_QUOTE.claim: 4.5, HIRING.claim: 4.0})
+    await run_prospect(
+        PROSPECT,
+        merge_brief(PROFILE, campaign),
+        d,
+        rules=RULES,
+        today=TODAY,
+        max_hook_candidates=1,
+    )
+    assert d.scorer.scored == [HIRING.claim] * 2  # type: ignore[attr-defined]
