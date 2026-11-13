@@ -9,12 +9,16 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, func, select
+from pydantic import TypeAdapter
+from sqlalchemy import JSON, DateTime, Float, ForeignKey, Integer, String, func, select, update
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
+from app.research.ports import SearchHit
+
 Json = JSON().with_variant(JSONB(), "postgresql")
+_HITS = TypeAdapter(list[SearchHit])
 
 
 def _now() -> datetime:
@@ -87,6 +91,20 @@ class RunRow(Base):
             "created_at": self.created_at.isoformat(),
             "finished_at": self.finished_at.isoformat() if self.finished_at else None,
         }
+
+
+class SearchCacheRow(Base):
+    __tablename__ = "search_cache"
+    key: Mapped[str] = mapped_column(String(512), primary_key=True)
+    hits: Mapped[list[dict[str, Any]]] = mapped_column(Json)
+    expires_at: Mapped[float] = mapped_column(Float, index=True)  # epoch seconds: portable
+
+
+class EngineSpendRow(Base):
+    __tablename__ = "engine_spend"
+    engine: Mapped[str] = mapped_column(String(32), primary_key=True)
+    period: Mapped[str] = mapped_column(String(7), primary_key=True)  # YYYY-MM
+    spent: Mapped[float] = mapped_column(Float, default=0.0)
 
 
 class Store:
@@ -260,3 +278,42 @@ class Store:
                 {**r.summary(), "outcome": r.outcome, "review": r.review}
                 for r in await s.scalars(query)
             ]
+
+
+class StoreLedger:
+    """The search cache and engine spend, kept in the database so restarts don't forget them."""
+
+    def __init__(self, store: Store) -> None:
+        self._store = store
+
+    async def cached(self, key: str, now: datetime) -> list[SearchHit] | None:
+        async with self._store.session() as s:
+            row = await s.get(SearchCacheRow, key)
+            if row is None or row.expires_at <= now.timestamp():
+                return None
+            return _HITS.validate_python(row.hits)
+
+    async def remember(self, key: str, hits: list[SearchHit], expires: datetime) -> None:
+        data = _HITS.dump_python(hits, mode="json")
+        async with self._store.session() as s, s.begin():
+            row = await s.get(SearchCacheRow, key)
+            if row is None:
+                s.add(SearchCacheRow(key=key, hits=data, expires_at=expires.timestamp()))
+            else:
+                row.hits, row.expires_at = data, expires.timestamp()
+
+    async def spent(self, engine: str, period: str) -> float:
+        async with self._store.session() as s:
+            row = await s.get(EngineSpendRow, (engine, period))
+            return row.spent if row else 0.0
+
+    async def charge(self, engine: str, period: str, amount: float) -> None:
+        async with self._store.session() as s, s.begin():
+            # An atomic increment, so parallel searches can't lose each other's spend.
+            done = await s.execute(
+                update(EngineSpendRow)
+                .where(EngineSpendRow.engine == engine, EngineSpendRow.period == period)
+                .values(spent=EngineSpendRow.spent + amount)
+            )
+            if done.rowcount == 0:  # type: ignore[attr-defined]
+                s.add(EngineSpendRow(engine=engine, period=period, spent=amount))

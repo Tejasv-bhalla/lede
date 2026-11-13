@@ -28,6 +28,11 @@ class Settings(BaseSettings):
     jina_api_key: SecretStr | None = None
     github_token: SecretStr | None = None
 
+    # Monthly search budgets (free tiers); the app stops calling an engine near its limit
+    tavily_monthly_credits: float = 1000.0  # 1 credit per basic search
+    exa_monthly_usd: float = 10.0  # free monthly credit; the one-time bonus is extra headroom
+    exa_usd_per_search: float = 0.007  # measured 13 Nov 2026 (search without page contents)
+
     # Storage
     database_url: str = f"sqlite:///{PROJECT_ROOT / 'backend' / 'local.db'}"
 

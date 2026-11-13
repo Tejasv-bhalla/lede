@@ -1,10 +1,17 @@
 import asyncio
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
+from app.db.store import Store, StoreLedger
 from app.domain.models import SignalCategory as Cat
-from app.providers.search.fusion import FusedSearcher, SearchUnavailable
+from app.providers.search.fusion import (
+    CACHE_DAYS,
+    EngineBudget,
+    FusedSearcher,
+    MemoryLedger,
+    SearchUnavailable,
+)
 from app.research.ports import PlannedQuery, ResearchTarget, SearchHit
 
 TARGET = ResearchTarget(
@@ -118,3 +125,85 @@ async def test_results_are_capped_after_ranking():
     many = [f"https://site{i}.example/" for i in range(20)]
     searcher = FusedSearcher([FakeProvider("ddg", hits(*many))], max_results=5)
     assert await urls(searcher) == many[:5]
+
+
+# ── budgets and cache ─────────────────────────────────────────────────────────
+
+NOV = datetime(2026, 11, 13, tzinfo=UTC)
+
+
+class CountingProvider(FakeProvider):
+    def __init__(self, name: str, hits_=()):
+        super().__init__(name, hits_)
+        self.calls = 0
+
+    async def search(self, query, target):
+        self.calls += 1
+        return await super().search(query, target)
+
+
+@pytest.fixture(params=["memory", "database"])
+async def ledger(request, tmp_path):
+    if request.param == "memory":
+        yield MemoryLedger()
+        return
+    store = Store(f"sqlite:///{tmp_path / 'ledger.db'}")
+    await store.create_all()
+    yield StoreLedger(store)
+    await store.dispose()
+
+
+def metered(providers, ledger, *, clock=lambda: NOV, **budgets):
+    return FusedSearcher(providers, ledger=ledger, budgets=budgets, clock=clock)
+
+
+async def test_an_engine_near_its_monthly_budget_is_skipped_and_the_others_carry_on(ledger):
+    tavily = CountingProvider("tavily", hits("https://a.example/1"))
+    ddg = CountingProvider("ddg", hits("https://b.example/2"))
+    searcher = metered(
+        [tavily, ddg], ledger, tavily=EngineBudget(monthly_limit=3, cost_per_search=1, reserve=0)
+    )
+    for i in range(4):
+        await searcher.search(PlannedQuery(Cat.FUNDING_MNA, f"query {i}"), TARGET)
+
+    assert (tavily.calls, ddg.calls) == (3, 4)
+    assert [f.reason for f in searcher.last_failures] == ["monthly budget reached"]
+    assert await ledger.spent("tavily", "2026-11") == 3
+
+
+async def test_spend_is_counted_per_calendar_month(ledger):
+    now = [NOV]
+    tavily = CountingProvider("tavily", hits("https://a.example/1"))
+    searcher = metered(
+        [tavily],
+        ledger,
+        clock=lambda: now[0],
+        tavily=EngineBudget(monthly_limit=1, cost_per_search=1, reserve=0),
+    )
+    await searcher.search(PlannedQuery(Cat.FUNDING_MNA, "q1"), TARGET)
+    now[0] = datetime(2026, 12, 1, tzinfo=UTC)
+    await searcher.search(PlannedQuery(Cat.FUNDING_MNA, "q2"), TARGET)
+    assert tavily.calls == 2
+
+
+async def test_a_repeated_query_is_answered_from_the_cache_without_spending(ledger):
+    tavily = CountingProvider("tavily", hits("https://a.example/1"))
+    searcher = metered(
+        [tavily], ledger, tavily=EngineBudget(monthly_limit=100, cost_per_search=1, reserve=0)
+    )
+    first = await searcher.search(QUERY, TARGET)
+    again = await searcher.search(PlannedQuery(QUERY.category, "  ACME funding   round "), TARGET)
+
+    assert again == first
+    assert tavily.calls == 1
+    assert await ledger.spent("tavily", "2026-11") == 1
+
+
+async def test_cached_results_expire_so_news_stays_fresh(ledger):
+    now = [NOV]
+    tavily = CountingProvider("tavily", hits("https://a.example/1"))
+    searcher = metered([tavily], ledger, clock=lambda: now[0])
+    await searcher.search(QUERY, TARGET)
+    now[0] = NOV + timedelta(days=CACHE_DAYS + 1)
+    await searcher.search(QUERY, TARGET)
+    assert tavily.calls == 2
