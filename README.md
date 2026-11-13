@@ -1,5 +1,13 @@
 # Lede
 
+> **Try it live:** [lede-fgxl.onrender.com](https://lede-fgxl.onrender.com)<br>
+> **Access code:** `zamp-lede-2026`
+>
+> The app starts empty: fill in the Seller profile, create a campaign, add a real prospect and choose
+> **Research** (about 2 minutes). Use real companies and people; made-up names find nothing. The
+> free server may take up to a minute to wake if it has been idle, and everyone with the code shares
+> one workspace.
+
 *Lede* (pronounced "leed") is the journalist's word for the opening line of a story: the line that
 makes someone keep reading. This tool writes that line for sales outreach, and backs it with a
 source.
@@ -11,9 +19,6 @@ seller's offer, writes the email and fact-checks it sentence by sentence. A pers
 approves every email. **Lede never sends anything itself.**
 
 When the evidence is weak, wrong or risky, Lede says so and stops or asks. It never invents a hook.
-
-**Live app:** [lede-fgxl.onrender.com](https://lede-fgxl.onrender.com) (access code shared with
-the submission). The free server sleeps when idle, so the first visit can take up to a minute.
 
 Built for the Zamp AI Solutions Analyst case study (problem statement 3). The full design rationale,
 with sources, is in [SYSTEM_DESIGN.md](SYSTEM_DESIGN.md).
