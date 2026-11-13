@@ -97,12 +97,14 @@ function FinishedRun({ run, events }: { run: RunDetail; events: TimedEvent[] }) 
   })()
 
   const hasDraft = Boolean(outcome?.draft)
+  // A low-signal run has no draft, but its scores explain why nothing was written.
+  const showScores = Boolean(outcome?.ranking) && (hasDraft || run.state === 'LOW_SIGNAL')
   return (
     <div
       className={cn(
         'grid gap-8 max-xl:grid-cols-[minmax(0,1fr)_300px]',
-        // The right-hand scoreboard only exists with a draft; otherwise the panel takes its room.
-        hasDraft
+        // The scoreboard column exists only when there are scores to show.
+        showScores
           ? 'grid-cols-[minmax(260px,320px)_minmax(0,1fr)_minmax(260px,320px)]'
           : 'grid-cols-[minmax(260px,320px)_minmax(0,1fr)]',
       )}
@@ -122,7 +124,7 @@ function FinishedRun({ run, events }: { run: RunDetail; events: TimedEvent[] }) 
         {ledger.length > 0 && <EvidenceLedger items={ledger} used={used} />}
       </aside>
       <div className="min-w-0 max-xl:order-1">{main}</div>
-      {hasDraft && outcome?.ranking && (
+      {showScores && outcome?.ranking && (
         <aside className="max-xl:order-3">
           <HookScoreboard
             ranked={outcome.ranking.ranked}

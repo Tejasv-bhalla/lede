@@ -228,10 +228,17 @@ export function ContactMoved({ run }: { run: RunDetail }) {
 export function NoDraft({ run }: { run: RunDetail }) {
   const meaning = STATE[run.state].meaning
   const problems = run.outcome?.problems ?? []
+  const best = run.state === 'LOW_SIGNAL' ? run.outcome?.ranking?.ranked[0] : undefined
   return (
     <section className="max-w-2xl rounded-lg border bg-card p-6">
       <h2>No email was written</h2>
       <p className="mt-1 text-muted-foreground">{meaning}</p>
+      {best && (
+        <p className="mt-3 text-sm text-muted-foreground">
+          The best opener found scored {best.total.toFixed(1)} of 5, below the bar for writing: “
+          {best.evidence.claim}” The scores alongside show why each fact fell short.
+        </p>
+      )}
       {problems.length > 0 && (
         <ul className="mt-3 list-disc pl-5 text-sm text-muted-foreground">
           {problems.map((p) => (

@@ -32,7 +32,7 @@ export function HookScoreboard({
     <section aria-labelledby="scores" className="flex flex-col gap-6">
       <div>
         <h2 id="scores" className="mb-1 text-base">
-          Why this opener
+          {chosenId ? 'Why this opener' : 'Openers considered'}
         </h2>
         <p className="text-xs text-muted-foreground">
           Each candidate is scored twice from 1 to 5 on six questions; your weights decide the
@@ -44,7 +44,7 @@ export function HookScoreboard({
           <li key={h.evidence.id}>
             <div className="mb-2 flex items-baseline justify-between gap-3">
               <p className="text-sm font-medium">
-                {i === 0 ? 'Chosen' : `Alternative ${i}`}
+                {i === 0 ? (chosenId ? 'Chosen' : 'Best found') : `Alternative ${i}`}
                 {h.evidence.id === chosenId && i !== 0 && ' (used)'}
               </p>
               <span className="text-sm font-semibold">{h.total.toFixed(1)}</span>
