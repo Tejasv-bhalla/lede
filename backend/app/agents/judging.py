@@ -20,10 +20,10 @@ from app.pipeline.hooks import DimensionScores
 from app.pipeline.ports import ClaimVerdict, Draft, DraftRequest
 from app.providers.llm_router import LLMRouter
 
-PROMPT_VERSION = "judging-v1"
+PROMPT_VERSION = "judging-v2"
 
 
-BATCH = 8  # items per call: small enough for careful judgement, large enough to save quota
+BATCH = 12  # items per call: one call covers a Standard shortlist; instructions sent once
 
 
 def _chunks[T](items: Sequence[T]) -> list[Sequence[T]]:
@@ -74,8 +74,8 @@ class LLMScorer:
         priority = brief.signal_priorities.get(e.category, "not set")
         return (
             f"[{e.id}] ({e.category.value}, about the {e.about.value}; campaign priority "
-            f'{priority}) {e.claim}\n      quote: "{e.verbatim_quote}"\n      source: {e.url} '
-            f"({e.source_type.value}); happened/published {age}"
+            f'{priority}) {e.claim}\n      quote: "{e.verbatim_quote[:220]}"\n'
+            f"      source: {e.url} ({e.source_type.value}); happened/published {age}"
         )
 
     async def _batch(self, items: Sequence[Evidence], brief: MergedBrief) -> list[DimensionScores]:
@@ -93,7 +93,7 @@ Recipient persona: {persona.title_patterns if persona else "unknown"}, seniority
 FACTS:
 {facts}
 
-For every id, score each dimension from 1 to 5 with a one-line reason:
+For every id, score each dimension from 1 to 5, then give ONE short reason for the fact:
 - offer_relevance: can one honest sentence link this to a problem the seller solves?
 - specificity: is it about THIS person/company, not the industry? Would the email fail if
   sent to someone else?
@@ -110,13 +110,11 @@ For every id, score each dimension from 1 to 5 with a one-line reason:
 def _dimensions(item: HookScoreOut | None) -> DimensionScores:
     if item is None:  # the model skipped it: lowest scores, so it can't win by omission
         return DimensionScores(
-            scores=dict.fromkeys(HOOK_DIMENSIONS, 1.0),
-            reasons=dict.fromkeys(HOOK_DIMENSIONS, "not scored"),
+            scores=dict.fromkeys(HOOK_DIMENSIONS, 1.0), reasons={"overall": "not scored"}
         )
-    dims = {d: getattr(item, d) for d in HOOK_DIMENSIONS}
     return DimensionScores(
-        scores={d: float(v.score) for d, v in dims.items()},
-        reasons={d: v.reason for d, v in dims.items()},
+        scores={d: float(getattr(item, d)) for d in HOOK_DIMENSIONS},
+        reasons={"overall": item.reason},
     )
 
 

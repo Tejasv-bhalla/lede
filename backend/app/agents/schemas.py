@@ -84,19 +84,21 @@ class EntailmentBatchOut(_Out):
     verdicts: list[EntailmentOut]
 
 
-class DimensionOut(_Out):
-    score: int = Field(ge=1, le=5)
-    reason: str
+_Score = Field(ge=1, le=5)
 
 
 class HookScoreOut(_Out):
+    """Six integer scores and one reason: per-dimension reasons cost ~6x the output tokens, and
+    free tiers meter tokens per minute."""
+
     id: str
-    offer_relevance: DimensionOut
-    specificity: DimensionOut
-    recency: DimensionOut
-    persona_fit: DimensionOut
-    source_strength: DimensionOut
-    closeness: DimensionOut
+    offer_relevance: int = _Score
+    specificity: int = _Score
+    recency: int = _Score
+    persona_fit: int = _Score
+    source_strength: int = _Score
+    closeness: int = _Score
+    reason: str = Field(description="One short sentence: why this would or wouldn't work.")
 
 
 class HookScoreBatchOut(_Out):
