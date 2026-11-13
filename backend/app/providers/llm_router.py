@@ -35,7 +35,7 @@ OVERLOAD_COOLDOWN_S = 30.0  # rest after "overloaded" (503/529): usually brief d
 MAX_WAIT_S = 65.0  # when a whole chain is resting, wait up to one per-minute window for a model
 MAX_IN_FLIGHT = 3  # concurrent calls per model: bursts are what trip per-minute free limits
 
-Kind = Literal["openai", "anthropic"]
+Kind = Literal["openai", "anthropic", "claude_code"]
 
 
 class LLMUnavailable(RuntimeError):
@@ -69,6 +69,10 @@ class Structured[M: BaseModel]:
 
 
 def make_client(provider: Provider, http_client: httpx2.AsyncClient | None) -> ModelClient:
+    if provider.kind == "claude_code":  # base_url carries the command to run
+        from app.providers.claude_code import ClaudeCodeClient
+
+        return ClaudeCodeClient(command=provider.base_url)
     if provider.kind == "anthropic":
         from app.providers.anthropic_client import AnthropicClient
 

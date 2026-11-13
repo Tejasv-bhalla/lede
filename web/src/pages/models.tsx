@@ -250,9 +250,11 @@ function Keys({ data }: { data: ModelSettings }) {
         </p>
       </div>
       <ul className="divide-y rounded-lg border bg-card">
-        {data.providers.map((p) => (
-          <KeyRow key={p.id} provider={p} disabled={!data.can_save_keys} />
-        ))}
+        {data.providers
+          .filter((p) => !p.local)
+          .map((p) => (
+            <KeyRow key={p.id} provider={p} disabled={!data.can_save_keys} />
+          ))}
       </ul>
     </section>
   )

@@ -41,6 +41,10 @@ class Settings(BaseSettings):
     # Encrypts model API keys that users save in the app. Any long random string; changing it
     # makes saved keys unreadable (they must be entered again).
     settings_secret: SecretStr | None = None
+    # Local demos only: offer "Claude Code on this computer" as a model provider, answering
+    # through the `claude` command and whoever is logged in to it. Never set on a server.
+    claude_code_local: bool = False
+    claude_code_command: str = "claude"
     sec_contact_email: str | None = None
     http_timeout_s: float = 10.0
     user_agent: str = "Lede/0.1 (research prototype)"

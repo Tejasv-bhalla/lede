@@ -45,6 +45,7 @@ def claude_reply(req: httpx2.Request) -> httpx2.Response:
 
 def settings(secret: str | None = "a-long-local-secret") -> Settings:
     return Settings(
+        _env_file=None,  # tests must not depend on this machine's .env
         demo_access_code=SecretStr(CODE),
         groq_api_key=SecretStr("free-groq"),
         settings_secret=SecretStr(secret) if secret else None,
@@ -175,3 +176,38 @@ async def test_a_key_can_be_tested_before_relying_on_it(api):
         )
     ).json()
     assert bad["ok"] is False and bad["error"]
+
+
+async def test_claude_code_is_offered_only_when_switched_on_for_this_computer(store):
+    client, _ = await make_client(store, settings())
+    async with client:
+        listed = {
+            p["id"] for p in (await client.get("/api/models", headers=AUTH)).json()["providers"]
+        }
+        refused = await client.put(
+            "/api/models/roles",
+            headers=AUTH,
+            json={"writer": {"provider": "claude_code", "model": "opus"}},
+        )
+    assert "claude_code" not in listed
+    assert refused.status_code == 409
+
+    local = settings().model_copy(update={"claude_code_local": True})
+    client, router = await make_client(store, local)
+    async with client:
+        provider = next(
+            p
+            for p in (await client.get("/api/models", headers=AUTH)).json()["providers"]
+            if p["id"] == "claude_code"
+        )
+        chosen = await client.put(
+            "/api/models/roles",
+            headers=AUTH,
+            json={"writer": {"provider": "claude_code", "model": "opus"}},
+        )
+    assert provider["has_key"] and provider["local"]  # no key needed: it uses this login
+    assert chosen.status_code == 200
+    assert (router.routes()["writer"][0].kind, router.routes()["writer"][0].model) == (
+        "claude_code",
+        "opus",
+    )

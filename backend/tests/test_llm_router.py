@@ -326,3 +326,55 @@ async def test_a_bad_claude_key_falls_back_without_resting_the_free_models():
 
     router = router_with(handler, {"writer": [CLAUDE, GROQ]})
     assert (await router.structured("writer", "q", Verdict)).provider == "groq"
+
+
+# ── Claude Code on this computer (local demos only) ─────────────────────────────
+
+
+def fake_claude(tmp_path, reply: dict) -> str:
+    """A stand-in for the `claude` command: records its arguments and prints `reply`."""
+    script = tmp_path / "claude"
+    script.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, sys\n"
+        f"open({str(tmp_path / 'args.json')!r}, 'w').write(json.dumps(sys.argv[1:]))\n"
+        "sys.stdin.read()\n"
+        f"print(json.dumps({reply!r}))\n"
+    )
+    script.chmod(0o755)
+    return str(script)
+
+
+def claude_code(command: str) -> Provider:
+    return Provider(
+        name="claude_code:opus", base_url=command, api_key="", model="opus", kind="claude_code"
+    )
+
+
+async def test_claude_code_answers_with_its_structured_output_and_no_tools(tmp_path):
+    command = fake_claude(
+        tmp_path,
+        {
+            "type": "result",
+            "is_error": False,
+            "structured_output": {"supported": True, "reason": "quote says so"},
+            "usage": {"input_tokens": 50, "output_tokens": 9},
+        },
+    )
+    router = LLMRouter({"writer": [claude_code(command), GROQ]})
+    result = await router.structured("writer", "Is the claim supported?", Verdict)
+
+    assert result.value == Verdict(supported=True, reason="quote says so")
+    assert result.provider == "claude_code:opus"
+    args = json.loads((tmp_path / "args.json").read_text())
+    assert args[args.index("--tools") + 1] == ""  # never runs tools on this computer
+    assert args[args.index("--model") + 1] == "opus"
+    assert "--json-schema" in args
+
+
+async def test_a_rate_limited_claude_code_falls_back_to_the_free_models(tmp_path):
+    command = fake_claude(
+        tmp_path, {"type": "result", "is_error": True, "api_error_status": 429, "result": "x"}
+    )
+    router = router_with(lambda req: completion(VALID), {"writer": [claude_code(command), GROQ]})
+    assert (await router.structured("writer", "q", Verdict)).provider == "groq"

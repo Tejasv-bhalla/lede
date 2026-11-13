@@ -8,7 +8,7 @@ from typing import Literal
 from app.providers.llm_roles import GEMINI_URL, GROQ_URL
 from app.providers.llm_router import Kind
 
-ProviderId = Literal["anthropic", "openai", "gemini", "groq", "openrouter", "custom"]
+ProviderId = Literal["anthropic", "openai", "gemini", "groq", "openrouter", "custom", "claude_code"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,6 +20,7 @@ class ProviderSpec:
     suggested_models: tuple[str, ...] = ()
     needs_base_url: bool = False
     key_optional: bool = False  # e.g. a local Ollama
+    local: bool = False  # uses this computer's own login; no key, local demos only
 
 
 PROVIDERS: dict[ProviderId, ProviderSpec] = {
@@ -44,6 +45,14 @@ PROVIDERS: dict[ProviderId, ProviderSpec] = {
             "groq", "Groq", "openai", GROQ_URL, ("openai/gpt-oss-120b", "qwen/qwen3.8-27b")
         ),
         ProviderSpec("openrouter", "OpenRouter", "openai", "https://openrouter.ai/api/v1"),
+        ProviderSpec(
+            "claude_code",
+            "Claude Code on this computer",
+            "claude_code",
+            "",
+            ("opus", "sonnet", "haiku"),
+            local=True,
+        ),
         ProviderSpec(
             "custom",
             "Other OpenAI-compatible endpoint (e.g. Ollama)",

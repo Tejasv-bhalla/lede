@@ -259,7 +259,8 @@ export interface QuotaLine {
 // ── model settings ──────────────────────────────────────────────────────────
 
 export type ModelRole = 'reader' | 'judge' | 'writer' | 'checker'
-export type ProviderId = 'anthropic' | 'openai' | 'gemini' | 'groq' | 'openrouter' | 'custom'
+export type ProviderId =
+  'anthropic' | 'openai' | 'gemini' | 'groq' | 'openrouter' | 'custom' | 'claude_code'
 
 export interface ModelChoice {
   provider: ProviderId
@@ -272,6 +273,8 @@ export interface ModelProvider {
   suggested_models: string[]
   needs_base_url: boolean
   key_optional: boolean
+  /** Uses this computer's own login (Claude Code); no key, local demos only. */
+  local: boolean
   has_key: boolean
   key_hint: string | null
   base_url: string | null

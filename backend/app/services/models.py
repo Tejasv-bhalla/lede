@@ -19,7 +19,7 @@ from pydantic import BaseModel
 
 from app.config import Settings
 from app.db.store import Store
-from app.providers.catalogue import PROVIDERS, ProviderId
+from app.providers.catalogue import PROVIDERS, ProviderId, ProviderSpec
 from app.providers.llm_roles import Role, build_routes
 from app.providers.llm_router import LLMRouter, LLMUnavailable, Provider
 from app.providers.model_client import ProviderFailure
@@ -68,6 +68,15 @@ class ModelService:
         self._sealer = Sealer(secret.get_secret_value()) if secret else None
         self._data: dict[str, Any] = {"keys": {}, "roles": {}}
 
+    def _specs(self) -> list[ProviderSpec]:
+        return [p for p in PROVIDERS.values() if not p.local or self._settings.claude_code_local]
+
+    def _available(self, provider: str) -> bool:
+        spec = PROVIDERS.get(provider)  # type: ignore[call-overload]
+        if spec is None or spec not in self._specs():
+            return False
+        return spec.local or provider in self._data["keys"]
+
     # ── startup ───────────────────────────────────────────────────────────────
 
     async def load(self) -> None:
@@ -89,11 +98,12 @@ class ModelService:
                     "suggested_models": list(spec.suggested_models),
                     "needs_base_url": spec.needs_base_url,
                     "key_optional": spec.key_optional,
-                    "has_key": spec.id in keys,
+                    "local": spec.local,
+                    "has_key": spec.local or spec.id in keys,
                     "key_hint": keys.get(spec.id, {}).get("hint"),
                     "base_url": keys.get(spec.id, {}).get("base_url"),
                 }
-                for spec in PROVIDERS.values()
+                for spec in self._specs()
             ],
             "roles": {role: self._data["roles"].get(role) for role in ROLES},
             "free": {role: [p.model for p in free.get(role, [])] for role in ROLES},
@@ -105,6 +115,8 @@ class ModelService:
         if self._sealer is None:
             raise NeedsSecret("Saving keys needs SETTINGS_SECRET in .env (any long random string).")
         spec = PROVIDERS[provider]
+        if spec.local:
+            raise ValueError(f"{spec.label} needs no key.")
         api_key = api_key.strip() or (NO_KEY if spec.key_optional else "")
         if not api_key:
             raise ValueError("Enter the API key.")
@@ -129,8 +141,8 @@ class ModelService:
             if choice is None:
                 self._data["roles"].pop(role, None)
                 continue
-            if choice.provider not in self._data["keys"]:
-                raise NoKey(f"Save a key for {PROVIDERS[choice.provider].label} first.")
+            if not self._available(choice.provider):
+                raise NoKey(f"{PROVIDERS[choice.provider].label} isn't set up on this server.")
             self._data["roles"][role] = choice.model_dump()
         await self._save()
 
@@ -155,13 +167,23 @@ class ModelService:
         self._apply()
 
     def _provider(self, provider: str, model: str) -> Provider | None:
+        if not self._available(provider):
+            return None
+        spec = PROVIDERS[provider]  # type: ignore[index]
+        if spec.local:
+            return Provider(
+                name=f"yours:{provider}:{model}",
+                base_url=self._settings.claude_code_command,  # the command to run
+                api_key="",
+                model=model,
+                kind=spec.kind,
+            )
         saved = self._data["keys"].get(provider)
         if saved is None or self._sealer is None:
             return None
         key = self._sealer.open(saved["sealed"])
         if key is None:  # sealed with a different SETTINGS_SECRET
             return None
-        spec = PROVIDERS[provider]  # type: ignore[index]
         return Provider(
             name=f"yours:{provider}:{model}",
             base_url=saved.get("base_url") or spec.base_url,
