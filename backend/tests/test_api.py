@@ -191,6 +191,24 @@ async def test_csv_import_saves_valid_rows_and_skips_prospects_already_in_the_ca
     assert names == ["Initech", "Acme"]
 
 
+async def test_an_email_column_is_read_and_a_malformed_address_is_reported(client):
+    cid = await new_campaign(client)
+    text = (
+        "Name,Company,Work Email\n"
+        "Priya Shah,Acme, Priya.Shah@Acme.com \n"
+        "Sam Lee,Globex,sam at globex\n"
+        "Ana Ruiz,Initech,\n"
+    )
+    preview = (await upload(client, cid, text, dry_run=True)).json()
+
+    assert [(r["person_name"], r["email"]) for r in preview["rows"]] == [
+        ("Priya Shah", "priya.shah@acme.com"),
+        ("Ana Ruiz", None),  # no address: Lede will look for one
+    ]
+    assert [e["row"] for e in preview["errors"]] == [3]
+    assert "email" in preview["errors"][0]["reason"]
+
+
 async def test_a_csv_without_a_company_column_is_rejected_with_the_columns_we_accept(client):
     cid = await new_campaign(client)
     r = await upload(client, cid, "Name,Email\nPriya,p@acme.com\n", dry_run=True)
@@ -392,6 +410,24 @@ async def test_export_is_a_csv_of_approved_drafts_with_the_seller_footer(client)
     assert rows[0]["body"].endswith("Reply STOP to opt out.")
     assert rows[0]["hook"] == PODCAST_QUOTE.claim
     assert rows[0]["hook_url"] == "https://pod.example/ep41"
+
+
+async def test_export_carries_the_address_to_send_to(client):
+    await client.put("/api/profile", json=PROFILE, headers=AUTH)
+    cid = await new_campaign(client)
+    pid = (
+        await client.post(
+            f"/api/campaigns/{cid}/prospects",
+            json={**PRIYA_ROW, "email": "priya@acme.example"},
+            headers=AUTH,
+        )
+    ).json()["id"]
+    run_id = await start_run(client, prospect_id=pid, tier="standard")
+    await events_of(client, run_id)
+    await review(client, run_id, action="approve")
+
+    rows = list(csv.DictReader(io.StringIO((await client.get("/api/export", headers=AUTH)).text)))
+    assert (rows[0]["email"], rows[0]["email_source"]) == ("priya@acme.example", "rep")
 
 
 async def test_health_check_is_public_and_never_touches_the_database(tmp_path):

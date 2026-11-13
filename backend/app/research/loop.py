@@ -19,6 +19,7 @@ from app.policy.entity import match_entity
 from app.policy.quotes import verify_quote
 from app.policy.sensitivity import screen_sensitivity
 from app.policy.sources import classify_source
+from app.research.emails import person_emails
 from app.research.ports import (
     Candidate,
     Fetcher,
@@ -69,6 +70,12 @@ class Failure:
     reason: str
 
 
+@dataclass(frozen=True, slots=True)
+class SeenEmail:
+    address: str
+    url: str  # the page that shows it
+
+
 @dataclass(slots=True)
 class ResearchResult:
     ledger: list[Evidence] = field(default_factory=list)
@@ -78,6 +85,7 @@ class ResearchResult:
     stop_reason: str = ""
     searches_used: int = 0
     pages_used: int = 0
+    emails: list[SeenEmail] = field(default_factory=list)  # the person's own, from pages read
 
 
 @dataclass(frozen=True, slots=True)
@@ -169,6 +177,7 @@ class _Run:
         fetched = await self._gather(urls, [self.deps.fetcher.fetch(u) for u in urls])
 
         pages = [page for _, page in fetched if page is not None]
+        self._note_emails(pages)
         read = await self._gather(
             [p.url for p in pages], [self.deps.reader.read(p, p.text, self.target) for p in pages]
         )
@@ -176,6 +185,18 @@ class _Run:
         for url, candidates in read:
             for candidate in candidates:
                 self._admit(number, by_url[url], candidate)
+
+    def _note_emails(self, pages: Sequence[Page]) -> None:
+        if not self.target.person_name:
+            return
+        known = {e.address for e in self.result.emails}
+        for page in pages:
+            for address in person_emails(
+                page.text, self.target.person_name, self.target.company_domain
+            ):
+                if address not in known:
+                    known.add(address)
+                    self.result.emails.append(SeenEmail(address, page.url))
 
     def _admit(self, number: int, page: Page, c: Candidate) -> None:
         check = verify_quote(c.quote, page.text)

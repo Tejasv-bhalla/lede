@@ -6,7 +6,7 @@ from datetime import date, datetime
 from enum import StrEnum
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # ── Enumerations ────────────────────────────────────────────────────────────────
 
@@ -229,6 +229,18 @@ class ProspectInput(_Model):
     title: str | None = None
     linkedin_url: str | None = None
     rep_notes: str | None = None
+    email: str | None = None  # when the rep already knows it; Lede then searches for none
+
+    @field_validator("email")
+    @classmethod
+    def _email(cls, value: str | None) -> str | None:
+        value = (value or "").strip().casefold()
+        if not value:
+            return None
+        local, _, host = value.partition("@")
+        if not local or "." not in host or " " in value:
+            raise ValueError("is not an email address")
+        return value
 
 
 # ── Evidence ledger ────────────────────────────────────────────────────────────

@@ -18,12 +18,12 @@ from app.domain.models import (
     Seniority,
 )
 from app.domain.models import SignalCategory as Cat
-from app.pipeline.ports import Contact, Draft, Identity, IdentityStatus
+from app.pipeline.ports import Contact, Draft, FoundEmail, Identity, IdentityStatus
 from app.pipeline.run import PipelineDeps, StageEvent, run_prospect
 from app.policy.draft_rules import DraftRules
 from app.providers.llm_router import LLMUnavailable
 from app.research.ports import Candidate, Page
-from tests.fakes import FakeEntailment, FakeFactChecker, FakeWriter
+from tests.fakes import FakeEmailFinder, FakeEntailment, FakeFactChecker, FakeWriter
 from tests.scenario import (
     GOOD_DRAFT,
     HIRING,
@@ -389,7 +389,7 @@ async def test_each_stage_reports_its_progress_for_the_live_view():
 
     assert [(e.stage, e.status) for e in events if e.status != "progress"] == [
         (stage, status)
-        for stage in ("identity", "research", "verify", "score", "draft", "fact_check")
+        for stage in ("identity", "research", "verify", "score", "draft", "fact_check", "email")
         for status in ("started", "done")
     ] + [("run", "finished")]
     assert events[-1].summary == "DRAFT_READY"
@@ -666,3 +666,84 @@ async def test_a_fact_the_checker_could_not_judge_is_not_treated_as_false():
     assert outcome.state is RunState.DRAFT_READY
     assert d.writer.requests[0].hook.evidence.claim == PODCAST_QUOTE.claim  # type: ignore[attr-defined]
     assert outcome.ranking is not None and not outcome.ranking.vetoed
+
+
+# ── finding the contact's email address ──────────────────────────────────────
+
+PODCAST_WITH_EMAIL = replace(
+    PAGES[PODCAST],
+    text=PAGES[PODCAST].text + " Listeners can write to Priya at Priya.Shah@acme.example.",
+)
+
+
+async def test_an_address_published_on_a_page_already_read_is_used_with_its_page():
+    d = deps(pages={**PAGES, PODCAST: PODCAST_WITH_EMAIL}, scores={PODCAST_QUOTE.claim: 4.5})
+    outcome = await run(d)
+
+    assert outcome.state is RunState.DRAFT_READY
+    assert outcome.email == FoundEmail("priya.shah@acme.example", "page", url=PODCAST)
+
+
+HUNTED = FoundEmail("priya@acme.example", "finder", confidence=94, status="valid")
+
+
+async def test_when_no_page_shows_an_address_the_email_finder_is_asked():
+    finder = FakeEmailFinder(HUNTED)
+    d = replace(deps(scores={PODCAST_QUOTE.claim: 4.5}), email_finder=finder)
+    outcome = await run(d)
+
+    assert outcome.email == HUNTED
+    assert finder.asked == [PRIYA]
+
+
+async def test_the_finder_is_not_asked_when_a_page_already_shows_the_address():
+    finder = FakeEmailFinder(HUNTED)
+    d = replace(
+        deps(pages={**PAGES, PODCAST: PODCAST_WITH_EMAIL}, scores={PODCAST_QUOTE.claim: 4.5}),
+        email_finder=finder,
+    )
+    outcome = await run(d)
+
+    assert outcome.email is not None and outcome.email.source == "page"
+    assert finder.asked == []
+
+
+async def test_an_address_the_rep_gave_is_used_and_nothing_is_searched():
+    finder = FakeEmailFinder(HUNTED)
+    given = PROSPECT.model_copy(update={"email": "priya.shah@acme.example"})
+    d = replace(
+        deps(pages={**PAGES, PODCAST: PODCAST_WITH_EMAIL}, scores={PODCAST_QUOTE.claim: 4.5}),
+        email_finder=finder,
+    )
+    outcome = await run_prospect(given, BRIEF, d, rules=RULES, today=TODAY)
+
+    assert outcome.email == FoundEmail("priya.shah@acme.example", "rep")
+    assert finder.asked == []
+
+
+async def test_the_reps_address_is_not_used_for_a_different_person_they_chose_instead():
+    finder = FakeEmailFinder(HUNTED)
+    given = PROSPECT.model_copy(update={"person_name": "John Smith", "email": "john@acme.example"})
+    d = replace(deps(scores={PODCAST_QUOTE.claim: 4.5}), email_finder=finder)
+    outcome = await run_prospect(given, BRIEF, d, rules=RULES, today=TODAY, pinned=PRIYA)
+
+    assert outcome.email == HUNTED
+    assert finder.asked == [PRIYA]
+
+
+async def test_a_finder_that_fails_leaves_the_draft_ready_without_an_address():
+    d = replace(deps(scores={PODCAST_QUOTE.claim: 4.5}), email_finder=FakeEmailFinder(fails=True))
+    outcome = await run(d)
+
+    assert outcome.state is RunState.DRAFT_READY
+    assert outcome.email is None
+    assert "email_lookup_failed" in outcome.notes
+
+
+async def test_no_address_is_looked_up_when_no_email_is_written():
+    finder = FakeEmailFinder(HUNTED)
+    d = replace(deps(scores={PODCAST_QUOTE.claim: 1.0}), email_finder=finder)
+    outcome = await run(d)
+
+    assert outcome.state is RunState.LOW_SIGNAL
+    assert finder.asked == []

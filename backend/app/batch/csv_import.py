@@ -26,6 +26,7 @@ COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
     "title": ("title", "job title", "role", "position"),
     "linkedin_url": ("linkedin", "linkedin url", "linkedin profile"),
     "rep_notes": ("notes", "rep notes", "context", "comments"),
+    "email": ("email", "e mail", "email address", "work email", "business email"),
 }
 
 
@@ -99,7 +100,10 @@ def read_prospects(text: str, existing: Iterable[ProspectInput] = ()) -> CsvPrev
         try:
             prospect = ProspectInput.model_validate(values)
         except ValidationError as exc:
-            preview.errors.append(RowError(number, exc.errors()[0]["msg"]))
+            error = exc.errors()[0]
+            field = ".".join(str(p) for p in error["loc"])
+            reason = error["msg"].removeprefix("Value error, ")
+            preview.errors.append(RowError(number, f"{field} {reason}" if field else reason))
             continue
         first = seen.setdefault(dedupe_key(prospect), number)
         if first != number:

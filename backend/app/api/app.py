@@ -310,6 +310,8 @@ EXPORT_COLUMNS = (
     "company_name",
     "person_name",
     "title",
+    "email",
+    "email_source",
     "subject",
     "body",
     "hook",
@@ -330,6 +332,7 @@ async def export_csv(store: StoreDep, campaign_id: str | None = None) -> Respons
     for run in await store.approved_runs(campaign_id):
         draft, prospect = run["review"]["draft"], run["prospect"]
         ranked = (run["outcome"] or {}).get("ranking", {}).get("ranked") or [{}]
+        email = (run["outcome"] or {}).get("email") or {}
         hook = ranked[0].get("evidence", {})
         writer.writerow(
             {
@@ -338,6 +341,8 @@ async def export_csv(store: StoreDep, campaign_id: str | None = None) -> Respons
                 "company_name": prospect["company_name"],
                 "person_name": prospect.get("person_name") or "",
                 "title": prospect.get("title") or "",
+                "email": email.get("address", ""),
+                "email_source": email.get("source", ""),
                 "subject": draft["subject"],
                 "body": f"{draft['body']}\n\n{footer}" if footer else draft["body"],
                 "hook": hook.get("claim", ""),

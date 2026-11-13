@@ -9,7 +9,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
 from enum import StrEnum
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
 
 from app.domain.models import Entailment, Evidence, ProspectInput
 
@@ -50,6 +50,17 @@ class Draft:
     body: str
     citations: tuple[str, ...] = ()  # evidence ids the draft relies on
     written_by: str | None = None  # the model that wrote (or last revised) it; None = the rep
+
+
+@dataclass(frozen=True, slots=True)
+class FoundEmail:
+    """The contact's address and where it came from, so the rep can judge how far to trust it."""
+
+    address: str
+    source: Literal["rep", "page", "finder"]  # typed in, published on a page read, or a finder
+    url: str | None = None  # the page that shows it
+    confidence: int | None = None  # the finder's own score, 0-100
+    status: str = ""  # the finder's verification result, e.g. "valid" or "accept_all"
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,4 +116,14 @@ class FactChecker(Protocol):
     async def check(self, draft: Draft, request: DraftRequest) -> list[ClaimVerdict]:
         """Check every claim in the draft against the request's hook and alternates (prospect
         facts) and the brief's approved claims (seller claims)."""
+        ...
+
+
+class EmailLookupFailed(Exception):
+    """The finder could not answer (bad key, quota spent, network); the run carries on."""
+
+
+class EmailFinder(Protocol):
+    async def find(self, contact: Contact) -> FoundEmail | None:
+        """Their work address, or None when the finder has none (or may not share it)."""
         ...

@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     jina_api_key: SecretStr | None = None
     github_token: SecretStr | None = None
 
+    # Email finder, asked only when no page read shows the contact's address
+    hunter_api_key: SecretStr | None = None
+
     # Monthly search budgets (free tiers); the app stops calling an engine near its limit
     tavily_monthly_credits: float = 1000.0  # 1 credit per basic search
     exa_monthly_usd: float = 10.0  # free monthly credit; the one-time bonus is extra headroom

@@ -13,6 +13,7 @@ from dataclasses import dataclass, field, replace
 from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Literal
+from urllib.parse import urlsplit
 
 from app.context.merge import MergedBrief
 from app.domain.models import (
@@ -30,8 +31,11 @@ from app.pipeline.ports import (
     Contact,
     Draft,
     DraftRequest,
+    EmailFinder,
+    EmailLookupFailed,
     EntailmentChecker,
     FactChecker,
+    FoundEmail,
     HookScorer,
     Identity,
     IdentityStatus,
@@ -72,6 +76,7 @@ class PipelineDeps:
     scorer: HookScorer
     writer: Writer
     fact_checker: FactChecker
+    email_finder: EmailFinder | None = None  # e.g. Hunter; None = published addresses only
 
 
 EventStatus = Literal["started", "progress", "done", "failed", "finished"]
@@ -96,6 +101,7 @@ class RunOutcome:
     claims: list[ClaimVerdict] = field(default_factory=list)  # last fact-check, claim by claim
     problems: list[str] = field(default_factory=list)  # what blocks approval of a held draft
     notes: list[str] = field(default_factory=list)
+    email: FoundEmail | None = None  # where to send it, when known
 
 
 _PRIORITY_RANK = {Priority.HIGH: 0, Priority.MEDIUM: 1, Priority.LOW: 2}
@@ -475,6 +481,47 @@ async def _stages(
         else "Every claim is backed by evidence"
     )
     outcome.state = RunState.DRAFT_HELD if outcome.problems else RunState.DRAFT_READY
+    try:
+        outcome.email = await _find_email(events, prospect, contact, research, deps.email_finder)
+    except EmailLookupFailed as exc:
+        outcome.notes.append("email_lookup_failed")
+        events.done(f"The email finder did not answer ({exc}); add the address yourself")
+
+
+async def _find_email(
+    events: _Events,
+    prospect: ProspectInput,
+    contact: Contact,
+    research: ResearchResult,
+    finder: EmailFinder | None,
+) -> FoundEmail | None:
+    """The contact's address: the rep's if they gave one for this person; otherwise the pages
+    research already read, then the finder."""
+    events.started("email")
+    if prospect.email and _same_person(prospect.person_name, contact.person_name):
+        events.done(f"{prospect.email}, as you gave it")
+        return FoundEmail(prospect.email, "rep")
+    if research.emails:
+        seen = research.emails[0]
+        events.done(f"{seen.address}, published on {_host(seen.url)}")
+        return FoundEmail(seen.address, "page", url=seen.url)
+    found = await finder.find(contact) if finder else None
+    if found:
+        events.done(f"{found.address}, from the email finder ({found.confidence}% confident)")
+        return found
+    events.done("No address found")
+    return None
+
+
+def _same_person(given: str | None, writing_to: str | None) -> bool:
+    """False when the rep picked someone else after a pause: their address is not this one's."""
+    return not given or " ".join(given.casefold().split()) == " ".join(
+        (writing_to or "").casefold().split()
+    )
+
+
+def _host(url: str) -> str:
+    return urlsplit(url).hostname or url
 
 
 def _describe_identity(identity: Identity, *, named: str | None = None, company: str = "") -> str:

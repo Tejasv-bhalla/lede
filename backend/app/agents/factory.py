@@ -14,6 +14,7 @@ from app.agents.writing import LLMWriter
 from app.config import Settings
 from app.domain.models import Tier
 from app.pipeline.run import PipelineDeps
+from app.providers.email_finder import HunterEmailFinder
 from app.providers.fetch import PageFetcher
 from app.providers.llm_roles import build_routes
 from app.providers.llm_router import LLMRouter
@@ -89,7 +90,12 @@ class Runtime:
             scorer=LLMScorer(self.router),
             writer=LLMWriter(self.router),
             fact_checker=LLMFactChecker(self.router),
+            email_finder=self.email_finder(),
         )
+
+    def email_finder(self) -> HunterEmailFinder | None:
+        key = self.settings.hunter_api_key
+        return HunterEmailFinder(self.http, key.get_secret_value()) if key else None
 
     async def close(self) -> None:
         await self.http.aclose()

@@ -8,7 +8,15 @@ from app.context.merge import MergedBrief
 from app.domain.hook_dimensions import HOOK_DIMENSIONS
 from app.domain.models import Entailment, Evidence, ProspectInput
 from app.pipeline.hooks import DimensionScores
-from app.pipeline.ports import ClaimVerdict, Draft, DraftRequest, Identity
+from app.pipeline.ports import (
+    ClaimVerdict,
+    Contact,
+    Draft,
+    DraftRequest,
+    EmailLookupFailed,
+    FoundEmail,
+    Identity,
+)
 from app.research.ports import (
     Candidate,
     LedgerView,
@@ -170,3 +178,18 @@ class FakeFactChecker:
             for s in self.unsupported
             if s in draft.body
         ]
+
+
+class FakeEmailFinder:
+    """Answers with the scripted address (or None); records who it was asked about."""
+
+    def __init__(self, found: FoundEmail | None = None, *, fails: bool = False):
+        self.found = found
+        self.fails = fails
+        self.asked: list[Contact] = []
+
+    async def find(self, contact: Contact) -> FoundEmail | None:
+        self.asked.append(contact)
+        if self.fails:
+            raise EmailLookupFailed("monthly limit reached")
+        return self.found
