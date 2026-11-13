@@ -149,7 +149,7 @@ class FakeFactChecker:
         self.unsupported = list(unsupported)
         self.checked: list[str] = []
 
-    async def check(self, draft: Draft, evidence: Sequence[Evidence]) -> list[ClaimVerdict]:
+    async def check(self, draft: Draft, request: DraftRequest) -> list[ClaimVerdict]:
         self.checked.append(draft.body)
         return [
             ClaimVerdict(claim=s, verdict=Entailment.UNSUPPORTED, reason="not in evidence")

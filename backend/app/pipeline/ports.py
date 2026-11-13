@@ -95,4 +95,7 @@ class Writer(Protocol):
 
 
 class FactChecker(Protocol):
-    async def check(self, draft: Draft, evidence: Sequence[Evidence]) -> list[ClaimVerdict]: ...
+    async def check(self, draft: Draft, request: DraftRequest) -> list[ClaimVerdict]:
+        """Check every claim in the draft against the request's hook and alternates (prospect
+        facts) and the brief's approved claims (seller claims)."""
+        ...

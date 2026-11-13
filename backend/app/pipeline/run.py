@@ -163,9 +163,8 @@ async def _fact_check(
 
     Returns the final draft and whatever problems remain after the last attempt.
     """
-    evidence = [request.hook.evidence, *(h.evidence for h in request.alternates)]
     for attempt in range(MAX_REVISIONS + 1):
-        verdicts = await deps.fact_checker.check(draft, evidence)
+        verdicts = await deps.fact_checker.check(draft, request)
         problems = _problems(draft, verdicts, request.rules)
         if not problems or attempt == MAX_REVISIONS:
             return draft, problems
