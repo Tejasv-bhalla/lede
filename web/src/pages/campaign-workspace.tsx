@@ -1,9 +1,16 @@
-import { FileUp, Play, Plus, Settings2 } from 'lucide-react'
+import { Download, FileUp, Play, Plus, Settings2 } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { toast } from 'sonner'
 
-import { useAddProspect, useCampaign, useImportCsv, useProspects, useStartRun } from '@/api/hooks'
+import {
+  useAddProspect,
+  useCampaign,
+  useImportCsv,
+  useProspects,
+  useRuns,
+  useStartRun,
+} from '@/api/hooks'
 import type { CsvPreview, Prospect, ProspectInput, Tier } from '@/api/types'
 import { PageHeader } from '@/components/app-shell'
 import { Field } from '@/components/field'
@@ -34,6 +41,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { downloadApproved } from '@/lib/send'
 import { ago } from '@/lib/status'
 import { cn } from '@/lib/utils'
 
@@ -61,6 +69,18 @@ export function CampaignWorkspace() {
   const [adding, setAdding] = useState(false)
   const [importing, setImporting] = useState(false)
 
+  // Every approved run counts, not only each prospect's latest: the export includes them all.
+  const runs = useRuns({ campaign_id: campaignId })
+  const approved = (runs.data ?? []).filter((r) => r.review_state?.startsWith('APPROVED')).length
+
+  async function download() {
+    try {
+      await downloadApproved(campaignId)
+    } catch (err) {
+      toast.error('The download failed', { description: (err as Error).message })
+    }
+  }
+
   async function run(p: Prospect) {
     try {
       const { run_id } = await startRun.mutateAsync({ prospect_id: p.id, tier })
@@ -81,6 +101,14 @@ export function CampaignWorkspace() {
               <Link to={`/setup?step=1&campaign=${campaignId}`}>
                 <Settings2 className="size-4" /> Edit
               </Link>
+            </Button>
+            <Button
+              variant="ghost"
+              disabled={!approved}
+              title={approved ? undefined : 'Approve a draft first'}
+              onClick={download}
+            >
+              <Download className="size-4" /> Approved drafts{approved ? ` (${approved})` : ''}
             </Button>
             <Button variant="outline" onClick={() => setImporting(true)}>
               <FileUp className="size-4" /> Import CSV
@@ -119,6 +147,14 @@ export function CampaignWorkspace() {
             Have a list? Import a CSV.
           </p>
           <div className="mt-6 flex justify-center gap-2">
+            <Button
+              variant="ghost"
+              disabled={!approved}
+              title={approved ? undefined : 'Approve a draft first'}
+              onClick={download}
+            >
+              <Download className="size-4" /> Approved drafts{approved ? ` (${approved})` : ''}
+            </Button>
             <Button variant="outline" onClick={() => setImporting(true)}>
               Import CSV
             </Button>

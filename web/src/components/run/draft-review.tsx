@@ -1,9 +1,9 @@
-import { CircleAlert } from 'lucide-react'
+import { CircleAlert, Copy, Mail, UserSearch } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
-import { useReview } from '@/api/hooks'
-import type { ClaimVerdict, Draft, Evidence, Review, RunState } from '@/api/types'
+import { useProfile, useReview } from '@/api/hooks'
+import type { ClaimVerdict, Draft, Evidence, ProspectInput, Review, RunState } from '@/api/types'
 import { ReviewBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -19,6 +19,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import { writerLabel } from '@/lib/models'
+import { emailBody, gmailComposeUrl, linkedinUrl } from '@/lib/send'
 
 import { SourceQuote } from './evidence'
 import { Problem } from './problem'
@@ -178,9 +179,64 @@ export function DraftView({
   )
 }
 
+/** After approval: the rep sends it from their own Gmail or LinkedIn. Lede sends nothing. */
+function SendYourself({ draft, prospect }: { draft: Draft; prospect: ProspectInput }) {
+  const footer = useProfile().data?.footer ?? ''
+  const text = `Subject: ${draft.subject}\n\n${emailBody(draft, footer)}`
+
+  async function copy(what: string, value: string) {
+    try {
+      await navigator.clipboard.writeText(value)
+      toast.success(what)
+    } catch {
+      toast.error('Copying is blocked in this browser', {
+        description: 'Select the text and copy it instead.',
+      })
+    }
+  }
+
+  return (
+    <section className="flex flex-col gap-3 rounded-lg border bg-card px-5 py-4">
+      <div>
+        <h2 className="text-base">Send it yourself</h2>
+        <p className="mt-0.5 text-sm text-muted-foreground">
+          Lede never sends email. Open it in your own Gmail or LinkedIn, check it once more and
+          press send there. Your footer is added.
+        </p>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <Button onClick={() => copy('Email copied', text)}>
+          <Copy className="size-4" /> Copy email
+        </Button>
+        <Button variant="outline" asChild>
+          <a href={gmailComposeUrl(draft, footer)} target="_blank" rel="noreferrer">
+            <Mail className="size-4" /> Open in Gmail
+          </a>
+        </Button>
+        <Button variant="outline" asChild>
+          <a
+            href={linkedinUrl(prospect)}
+            target="_blank"
+            rel="noreferrer"
+            onClick={() =>
+              void copy('Message copied', emailBody(draft, footer)).then(() =>
+                toast.message('Paste it into a LinkedIn message to them.'),
+              )
+            }
+          >
+            <UserSearch className="size-4" />{' '}
+            {prospect.linkedin_url ? 'Open LinkedIn profile' : 'Find on LinkedIn'}
+          </a>
+        </Button>
+      </div>
+    </section>
+  )
+}
+
 export function DraftReview({
   runId,
   state,
+  prospect,
   draft,
   claims,
   evidence,
@@ -189,6 +245,7 @@ export function DraftReview({
 }: {
   runId: string
   state: RunState
+  prospect: ProspectInput
   draft: Draft
   claims: ClaimVerdict[]
   evidence: Evidence[]
@@ -276,6 +333,8 @@ export function DraftReview({
       ) : (
         <DraftView draft={shown} claims={review ? [] : claims} evidence={evidence} />
       )}
+
+      {review && review.state !== 'REJECTED' && <SendYourself draft={shown} prospect={prospect} />}
 
       {!review && (
         <div className="sticky bottom-4 z-20 flex items-center justify-between gap-3 rounded-lg border bg-card/95 px-4 py-3 shadow-lg backdrop-blur">

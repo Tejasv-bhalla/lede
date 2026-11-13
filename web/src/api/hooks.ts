@@ -15,6 +15,7 @@ import type {
   Prospect,
   ProspectInput,
   Review,
+  ReviewState,
   RunDetail,
   RunState,
   SellerProfile,
@@ -132,7 +133,10 @@ export function useRuns(filters: { campaign_id?: string; state?: RunState } = {}
   )
   return useQuery({
     queryKey: [...keys.runs, filters],
-    queryFn: () => api.get<(RunDetail & { prospect: ProspectInput })[]>(`/runs?${params}`),
+    queryFn: () =>
+      api.get<(RunDetail & { prospect: ProspectInput; review_state: ReviewState | null })[]>(
+        `/runs?${params}`,
+      ),
   })
 }
 
