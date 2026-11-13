@@ -1,3 +1,5 @@
+import pytest
+
 from app.policy.draft_rules import DraftRules, check_draft
 
 GOOD = (
@@ -27,6 +29,26 @@ def test_recency_wording_is_flagged_when_the_hook_is_not_recent():
     body = "Hi Priya, congrats on the funding you just announced. " + GOOD
     assert "unsupported_recency" in kinds(body, DraftRules(recency_allowed=False))
     assert "unsupported_recency" not in kinds(body, DraftRules(recency_allowed=True))
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "I saw that you're actively hiring support staff across Grand Rapids.",
+        "Your team is currently opening new hospitals.",
+        "You are expanding right now, which caught my eye.",
+        "At the moment you're adding clinics in Ohio.",
+    ],
+)
+def test_wording_that_presents_an_old_fact_as_happening_now_is_flagged(sentence):
+    body = f"Hi Priya, {sentence} " + GOOD
+    assert "unsupported_recency" in kinds(body, DraftRules(recency_allowed=False))
+    assert "unsupported_recency" not in kinds(body, DraftRules(recency_allowed=True))
+
+
+def test_an_old_fact_told_in_the_past_with_its_date_passes():
+    body = "Hi Priya, last November your team opened its fourth Grand Rapids hospital. " + GOOD
+    assert "unsupported_recency" not in kinds(body, DraftRules(recency_allowed=False))
 
 
 def test_link_not_in_the_evidence_is_flagged():

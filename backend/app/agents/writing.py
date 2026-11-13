@@ -9,12 +9,14 @@ from app.pipeline.hooks import RankedHook
 from app.pipeline.ports import Draft, DraftRequest
 from app.providers.llm_router import LLMRouter
 
-PROMPT_VERSION = "writer-v3"
+PROMPT_VERSION = "writer-v4"
 
 RECENT_OK = "You may say it is recent."
 NOT_RECENT = (
-    "Do NOT call it recent, new or just announced, and don't congratulate on timing: "
-    "it is not recent enough."
+    "The hook is NOT recent. Tell it in the past tense with when it happened, using its date "
+    "(e.g. 'Last November your team opened...'). Never present it as still happening: no "
+    "'currently', 'actively', 'right now', 'recently', 'new' or 'just', and no congratulations "
+    "on timing."
 )
 
 # Best-of-N variants differ in framing, not just sampling, so the two drafts genuinely compete.
@@ -39,7 +41,8 @@ def _brief(r: DraftRequest) -> str:
     claims = "\n".join(f"- {cl.text}" for cl in b.claims) or "- (none: make no product claims)"
     never = "; ".join(r.rules.never_claims) or "none"
     banned = "; ".join(r.rules.banned_phrases)
-    return f"""RECIPIENT: {c.person_name or "(no named person: write to the role)"}, \
+    return f"""TODAY: {r.today.isoformat()}
+RECIPIENT: {c.person_name or "(no named person: write to the role)"}, \
 {c.title or "title unknown"}, at {c.company_name}
 SELLER'S OBJECTIVE: {b.objective}
 PROBLEMS THE SELLER SOLVES: {"; ".join(b.pains) or "not stated"}

@@ -23,7 +23,9 @@ DEFAULT_BANNED_PHRASES: tuple[str, ...] = (
 _URL = re.compile(r"https?://[^\s)>\]]+")
 _RECENCY = re.compile(
     r"\b(?:recent(?:ly)?|just (?:announced|launched|raised|joined|hired|released)|"
-    r"this (?:week|month)|last week|newly|fresh(?:ly)?|congrat\w*)\b",
+    r"this (?:week|month)|last week|newly|fresh(?:ly)?|congrat\w*|"
+    # An old fact told as if it is still happening ("you're actively hiring").
+    r"currently|actively|right now|at the moment|these days|nowadays|at present)\b",
     re.IGNORECASE,
 )
 
