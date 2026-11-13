@@ -79,6 +79,16 @@ export const api = {
   del: <T>(path: string) => request<T>('DELETE', path),
 }
 
+/** The access code, when the server is a public demo that shows it on the login page. */
+export async function codeHint(): Promise<string | null> {
+  try {
+    const res = await fetch('/api/auth/hint')
+    return res.ok ? ((await res.json()).code as string | null) : null
+  } catch {
+    return null // no hint is fine; the gate still works
+  }
+}
+
 export async function checkCode(code: string): Promise<boolean> {
   const res = await fetch('/api/auth/check', {
     method: 'POST',

@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
-import { checkCode, setAccessCode } from '@/api/client'
+import { checkCode, codeHint, setAccessCode } from '@/api/client'
 import { Wordmark } from '@/components/app-shell'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -10,6 +10,11 @@ export function AccessGate({ onUnlock }: { onUnlock: () => void }) {
   const [code, setCode] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [hint, setHint] = useState<string | null>(null)
+
+  useEffect(() => {
+    void codeHint().then(setHint)
+  }, [])
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
@@ -50,8 +55,23 @@ export function AccessGate({ onUnlock }: { onUnlock: () => void }) {
             value={code}
             onChange={(e) => setCode(e.target.value)}
             aria-invalid={Boolean(error)}
-            aria-describedby={error ? 'code-error' : undefined}
+            aria-describedby={
+              [error && 'code-error', hint && 'code-hint'].filter(Boolean).join(' ') || undefined
+            }
           />
+          {hint && (
+            <p id="code-hint" className="text-sm text-muted-foreground">
+              Reviewing this demo? The access code is{' '}
+              <button
+                type="button"
+                onClick={() => setCode(hint)}
+                className="rounded bg-secondary px-1.5 py-0.5 font-mono text-[0.85em] text-foreground hover:bg-accent"
+                title="Fill it in"
+              >
+                {hint}
+              </button>
+            </p>
+          )}
           {error && (
             <p id="code-error" className="text-sm text-destructive">
               {error}
