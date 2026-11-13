@@ -420,3 +420,80 @@ async def test_a_signal_the_campaign_marks_high_priority_wins_the_shortlist():
         max_hook_candidates=1,
     )
     assert d.scorer.scored == [HIRING.claim] * 2  # type: ignore[attr-defined]
+
+
+OLD_BLOG = "https://acme.example/blog/old-launch"
+NEWS = "https://news.example/acme-raises"
+LAUNCH = Candidate(
+    Cat.PRODUCT_LAUNCH,
+    About.COMPANY,
+    "Acme launched its invoicing app",
+    "Acme launched its invoicing app for mid-size teams",
+)
+RAISE = Candidate(
+    Cat.FUNDING_MNA,
+    About.COMPANY,
+    "Acme raised a Series B",
+    "Acme raised a $40 million Series B led by Example Ventures",
+)
+
+
+async def test_fresh_facts_are_shortlisted_ahead_of_stale_ones_from_stronger_sources():
+    pages = {
+        OLD_BLOG: Page(
+            url=OLD_BLOG,
+            text="Today Acme launched its invoicing app for mid-size teams.",
+            published_at=date(2025, 1, 10),  # first-party, but long outside its window
+        ),
+        NEWS: Page(
+            url=NEWS,
+            text="Acme raised a $40 million Series B led by Example Ventures on Monday.",
+            published_at=date(2026, 11, 3),
+        ),
+    }
+    d = deps(pages=pages, candidates={OLD_BLOG: [LAUNCH], NEWS: [RAISE]}, scores={})
+    await run(d, max_hook_candidates=1)
+    assert d.scorer.scored == [RAISE.claim] * 2  # type: ignore[attr-defined]
+
+
+async def test_one_page_cannot_fill_the_shortlist():
+    roundup = "https://acme.example/news"
+    text = (
+        "Acme opened a Berlin office for its European customers. "
+        "Acme hired a new Chief Financial Officer from Globex. "
+        "Acme launched an AI assistant for its accounting product."
+    )
+    same_page = [
+        Candidate(
+            Cat.EXPANSION,
+            About.COMPANY,
+            "Acme opened a Berlin office",
+            "Acme opened a Berlin office for its European customers",
+        ),
+        Candidate(
+            Cat.LEADERSHIP_HIRE,
+            About.COMPANY,
+            "Acme hired a new CFO",
+            "Acme hired a new Chief Financial Officer from Globex",
+        ),
+        Candidate(
+            Cat.PRODUCT_LAUNCH,
+            About.COMPANY,
+            "Acme launched an AI assistant",
+            "Acme launched an AI assistant for its accounting product",
+        ),
+    ]
+    pages = {
+        roundup: Page(url=roundup, text=text, published_at=date(2026, 11, 5)),
+        NEWS: Page(
+            url=NEWS,
+            text="Acme raised a $40 million Series B led by Example Ventures on Monday.",
+            published_at=date(2026, 11, 3),
+        ),
+    }
+    d = deps(pages=pages, candidates={roundup: same_page, NEWS: [RAISE]}, scores={})
+    await run(d, max_hook_candidates=3)
+
+    scored = set(d.scorer.scored)  # type: ignore[attr-defined]
+    assert RAISE.claim in scored
+    assert len(scored & {c.claim for c in same_page}) == 2

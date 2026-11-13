@@ -104,22 +104,44 @@ _SOURCE_RANK = {
 }
 
 
+MAX_PER_PAGE = 2  # one rich page must not crowd out every other source
+_FRESHNESS_RANK = {Freshness.RECENT: 0, Freshness.UNDATED: 1, Freshness.STALE: 2}
+
+
 def _shortlist(
     ledger: list[Evidence], brief: MergedBrief, today: date, limit: int
 ) -> list[Evidence]:
     """Pick the facts worth spending AI calls on, using only what code already knows: campaign
-    priority, person before company, source strength, then freshness."""
+    priority, freshness within the signal's window, person before company, source strength,
+    then age; at most MAX_PER_PAGE from any one page."""
 
-    def key(e: Evidence) -> tuple[int, int, int, int]:
+    def key(e: Evidence) -> tuple[int, int, int, int, int]:
         when = e.event_date or e.published_at
+        freshness = assess_recency(
+            e.category,
+            published_at=e.published_at,
+            event_date=e.event_date,
+            today=today,
+            overrides=brief.recency_windows_days,
+        ).freshness
         return (
             _PRIORITY_RANK.get(brief.signal_priorities.get(e.category, Priority.MEDIUM), 1),
+            _FRESHNESS_RANK[freshness],
             0 if e.about is About.PERSON else 1,
             _SOURCE_RANK.get(e.source_type, 3),
             (today - when).days if when else 10_000,
         )
 
-    return sorted((e for e in ledger if veto_reason(e) is None), key=key)[:limit]
+    picked: list[Evidence] = []
+    per_page: dict[str, int] = {}
+    for e in sorted((e for e in ledger if veto_reason(e) is None), key=key):
+        if per_page.get(e.url, 0) >= MAX_PER_PAGE:
+            continue
+        per_page[e.url] = per_page.get(e.url, 0) + 1
+        picked.append(e)
+        if len(picked) == limit:
+            break
+    return picked
 
 
 async def _verify(
