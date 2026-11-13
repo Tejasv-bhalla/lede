@@ -12,6 +12,8 @@ at the outer boundary; our own modules are never mocked.
 | Pipeline outcomes | `app.pipeline.run_prospect` | Wrong routing between stages / final states | Real model quality (evals) |
 | AI model router | `app.providers.llm_router` | Missing fallback on rate limits; invalid JSON accepted | Provider-specific quirks |
 | API endpoints | FastAPI app via test client | Contract breaks the frontend would hit | UI rendering |
+| Search fusion (added 13 Nov) | `app.providers.search.fusion.FusedSearcher` with fake providers | Bad merge/ranking, duplicate URLs, one provider sinking a search, unreadable hosts | Real result quality |
+| Page extraction (added 13 Nov) | The page fetcher on saved real HTML | Boilerplate in text, missed dates, bad/oversized/blocked pages, fallback not used | Sites changing later |
 
-Not tested here: source parsers (deferred until real responses are recorded), real model quality
+Not tested here: the thin provider adapters (Tavily, Exa, DuckDuckGo response mapping), which are smoke-tested live, real model quality
 (covered by `backend/evals/`).
