@@ -120,8 +120,8 @@ def _preflight(prospect: ProspectInput, brief: MergedBrief) -> list[str]:
 def _rules_for(
     rules: DraftRules, hook: Evidence, ledger: list[Evidence], brief: MergedBrief, today: date
 ) -> DraftRules:
-    """Tighten the workspace rules for this run: recency words only for a recent hook, and
-    links only to pages we hold as evidence or to the seller's approved proof."""
+    """Tighten the workspace rules for this run: the brief's never-claims, recency words only
+    for a recent hook, and links only to evidence pages or the seller's approved proof."""
     freshness = assess_recency(
         hook.category,
         published_at=hook.published_at,
@@ -132,6 +132,7 @@ def _rules_for(
     allowed = {e.url for e in ledger} | {c.proof_url for c in brief.claims if c.proof_url}
     return replace(
         rules,
+        never_claims=tuple(dict.fromkeys([*rules.never_claims, *brief.never_claims])),
         recency_allowed=rules.recency_allowed and freshness is Freshness.RECENT,
         allowed_urls=frozenset(allowed),
     )

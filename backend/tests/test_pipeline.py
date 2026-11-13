@@ -443,3 +443,23 @@ async def test_a_failed_stage_is_reported_as_failed():
 
     assert (events[-2].stage, events[-2].status) == ("draft", "failed")
     assert (events[-1].stage, events[-1].summary) == ("run", "FAILED")
+
+
+async def test_never_claims_from_the_profile_and_campaign_are_enforced_on_the_draft():
+    campaign = Campaign(
+        id="c1",
+        name="Q4",
+        objective="Book demos",
+        persona_id="fin",
+        extra_never_claims=["guaranteed savings"],
+    )
+    promising = Draft(
+        subject="Closing the books faster", body=GOOD_DRAFT.body + " Guaranteed savings."
+    )
+    d = deps(drafts=(promising,))
+    outcome = await run_prospect(
+        PROSPECT, merge_brief(PROFILE, campaign), d, rules=RULES, today=TODAY
+    )
+
+    assert outcome.state is RunState.DRAFT_HELD
+    assert any("never_claim" in p for p in outcome.problems)
