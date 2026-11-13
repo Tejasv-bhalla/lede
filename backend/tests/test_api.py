@@ -56,6 +56,23 @@ async def test_access_code_check_says_whether_the_code_is_right(client):
     assert (await client.post("/api/auth/check", json={"code": CODE})).json() == {"ok": True}
 
 
+async def test_the_login_page_shows_the_code_only_when_the_server_allows_it(tmp_path):
+    async def hint(**extra) -> dict:
+        store = Store(f"sqlite:///{tmp_path / 'hint.db'}")
+        app = create_app(
+            Settings(_env_file=None, demo_access_code=SecretStr(CODE), **extra), store=store
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as c:
+            body = (await c.get("/api/auth/hint")).json()
+        await store.dispose()
+        return body
+
+    assert await hint() == {"code": None}  # private by default
+    assert await hint(show_access_code=True) == {"code": CODE}
+
+
 async def test_api_refuses_requests_without_the_access_code(client):
     assert (await client.get("/api/profile")).status_code == 401
     assert (await client.get("/api/profile", headers={"X-Access-Code": "nope"})).status_code == 401

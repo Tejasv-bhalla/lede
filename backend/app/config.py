@@ -43,6 +43,9 @@ class Settings(BaseSettings):
     # App
     web_dist_dir: Path = PROJECT_ROOT / "web" / "dist"  # the built React app, served at /
     demo_access_code: SecretStr | None = None
+    # Public demos only: show the access code on the login page (for reviewers who open the link
+    # without reading the README). Remove it to make the app private again.
+    show_access_code: bool = False
     # Encrypts model API keys that users save in the app. Any long random string; changing it
     # makes saved keys unreadable (they must be entered again).
     settings_secret: SecretStr | None = None

@@ -78,6 +78,15 @@ async def health(request: Request) -> dict[str, bool]:
     return {"ok": True, "runs_enabled": request.app.state.runs is not None}
 
 
+@public.get("/auth/hint")
+async def code_hint(request: Request) -> dict[str, str | None]:
+    """The code itself, for a public demo only: shown on the login page when SHOW_ACCESS_CODE is
+    on. Off by default, so a private deployment never reveals it."""
+    settings: Settings = request.app.state.settings
+    code = settings.demo_access_code
+    return {"code": code.get_secret_value() if settings.show_access_code and code else None}
+
+
 @public.post("/auth/check")
 async def check_code(body: CodeCheck, request: Request) -> dict[str, bool]:
     return {"ok": _code_matches(request.app.state.settings, body.code)}
