@@ -1,5 +1,7 @@
 from datetime import date
 
+import pytest
+
 from app.context.merge import merge_brief
 from app.domain.models import (
     About,
@@ -129,3 +131,57 @@ async def test_drafts_from_the_best_verified_hook_and_marks_the_run_ready():
     (request,) = d.writer.requests  # type: ignore[attr-defined]
     assert request.hook.evidence.claim == PODCAST_QUOTE.claim
     assert request.contact == PRIYA
+
+
+async def test_contact_who_moved_companies_stops_before_research_and_shows_the_new_role():
+    globex = Contact(company_name="Globex", person_name="Priya Shah", title="CFO")
+    d = deps(identity=Identity(IdentityStatus.MOVED, contact=globex))
+    outcome = await run(d)
+
+    assert outcome.state is RunState.CONTACT_MOVED
+    assert outcome.identity is not None and outcome.identity.contact == globex
+    assert d.research.searcher.queries == []  # type: ignore[attr-defined]
+    assert outcome.draft is None
+
+
+TWO_PRIYAS = (
+    PRIYA,
+    Contact(
+        company_name="Acme Robotics",
+        company_domain="acmerobotics.example",
+        person_name="Priya Shah",
+    ),
+)
+
+
+@pytest.mark.parametrize("status", [IdentityStatus.AMBIGUOUS, IdentityStatus.SUGGESTED])
+async def test_run_pauses_for_the_rep_when_the_contact_is_ambiguous_or_only_suggested(status):
+    d = deps(identity=Identity(status, candidates=TWO_PRIYAS))
+    outcome = await run(d)
+
+    assert outcome.state is RunState.NEEDS_CLARIFICATION
+    assert outcome.identity is not None and outcome.identity.candidates == TWO_PRIYAS
+    assert d.research.searcher.queries == []  # type: ignore[attr-defined]
+
+
+async def test_the_reps_pick_resumes_the_run_without_resolving_identity_again():
+    d = deps(identity=Identity(IdentityStatus.AMBIGUOUS, candidates=TWO_PRIYAS))
+    outcome = await run(d, pinned=PRIYA)
+
+    assert outcome.state is RunState.DRAFT_READY
+    assert d.resolver.calls == 0  # type: ignore[attr-defined]
+    assert d.writer.requests[0].contact == PRIYA  # type: ignore[attr-defined]
+
+
+async def test_person_not_found_falls_back_to_company_research_with_a_note():
+    d = deps(
+        identity=Identity(IdentityStatus.NOT_FOUND),
+        scores={HIRING.claim: 4.0},
+        candidates={CAREERS: [HIRING]},
+    )
+    outcome = await run(d)
+
+    assert outcome.state is RunState.DRAFT_READY
+    contact = d.writer.requests[0].contact  # type: ignore[attr-defined]
+    assert (contact.company_name, contact.person_name) == ("Acme", None)
+    assert "person_not_found" in outcome.notes

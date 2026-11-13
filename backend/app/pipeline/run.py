@@ -13,18 +13,27 @@ from app.context.merge import MergedBrief
 from app.domain.models import ProspectInput, RunState
 from app.pipeline.hooks import DimensionScores, HookRanking, rank_hooks
 from app.pipeline.ports import (
+    Contact,
     Draft,
     DraftRequest,
     EntailmentChecker,
     FactChecker,
     HookScorer,
     Identity,
+    IdentityStatus,
     Resolver,
     Writer,
 )
 from app.policy.draft_rules import DraftRules
 from app.research.loop import Budget, ResearchDeps, ResearchResult, run_research
 from app.research.ports import ResearchTarget
+
+# Identity results that stop the run until the rep decides.
+_PAUSES = {
+    IdentityStatus.MOVED: RunState.CONTACT_MOVED,
+    IdentityStatus.AMBIGUOUS: RunState.NEEDS_CLARIFICATION,
+    IdentityStatus.SUGGESTED: RunState.NEEDS_CLARIFICATION,
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,11 +64,25 @@ async def run_prospect(
     rules: DraftRules,
     today: date,
     budget: Budget | None = None,
+    pinned: Contact | None = None,
 ) -> RunOutcome:
-    identity = await deps.resolver.resolve(prospect)
-    contact = identity.contact
-    assert contact is not None
+    """`pinned` is the contact the rep confirmed after a pause; identity is not resolved again."""
+    identity = (
+        Identity(IdentityStatus.CONFIRMED, contact=pinned)
+        if pinned
+        else await deps.resolver.resolve(prospect)
+    )
     outcome = RunOutcome(RunState.RUNNING, identity=identity)
+    if identity.status in _PAUSES:
+        outcome.state = _PAUSES[identity.status]
+        return outcome
+    contact = identity.contact
+    if identity.status is IdentityStatus.NOT_FOUND:
+        outcome.notes.append("person_not_found")
+        contact = Contact(
+            company_name=prospect.company_name, company_domain=prospect.company_domain
+        )
+    assert contact is not None, "a confirmed identity always carries its contact"
 
     target = ResearchTarget(
         company_name=contact.company_name,
