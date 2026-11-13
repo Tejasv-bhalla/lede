@@ -373,15 +373,19 @@ async def _stages(
         ),
     )
     events.done(
-        f"{len(research.ledger)} verified items from {research.pages_used} pages in "
-        f"{research.rounds} round(s); stopped: {research.stop_reason}"
+        f"{_count(len(research.ledger), 'verified fact')} from "
+        f"{_count(research.pages_used, 'page')} in {_count(research.rounds, 'round')}; "
+        f"{STOP_REASONS.get(research.stop_reason, research.stop_reason)}"
     )
 
     events.started("verify")
     shortlist = _shortlist(research.ledger, brief, today, max_hook_candidates)
     ledger = research.ledger = await _verify(research.ledger, shortlist, deps.entailment)
     unsupported = sum(e.entailment is Entailment.UNSUPPORTED for e in ledger)
-    events.done(f"{len(shortlist)} checked, {unsupported} unsupported")
+    events.done(
+        f"{_count(len(shortlist), 'claim')} checked; "
+        + (f"{unsupported} not supported by their quote" if unsupported else "all supported")
+    )
 
     events.started("score")
     picked = {e.id for e in shortlist}
@@ -389,9 +393,9 @@ async def _stages(
     samples = await _score(eligible, deps.scorer, brief)
     ranking = outcome.ranking = rank_hooks(ledger, samples, weights=brief.hook_weights)
     events.done(
-        f"top hook {ranking.ranked[0].total:.2f}: {ranking.ranked[0].evidence.claim}"
+        f"Best opener scores {ranking.ranked[0].total:.1f} of 5: {ranking.ranked[0].evidence.claim}"
         if ranking.ranked
-        else "no usable hook"
+        else "Nothing usable as an opener"
     )
     if ranking.outcome != "ok":
         outcome.state = _NO_HOOK[ranking.outcome]
@@ -410,17 +414,40 @@ async def _stages(
     )
     outcome.rules = request.rules
     draft = await _best_draft(deps.writer, request)
-    events.done(f"best of {DRAFT_VARIANTS} variants: {len(draft.body.split())} words")
+    events.done(f"Kept the better of {DRAFT_VARIANTS} drafts ({len(draft.body.split())} words)")
 
     events.started("fact_check")
     outcome.draft, outcome.problems, outcome.claims = await _fact_check(draft, request, deps)
-    events.done(f"{len(outcome.problems)} problem(s) remain" if outcome.problems else "all clear")
+    events.done(
+        f"{_count(len(outcome.problems), 'problem')} left to fix"
+        if outcome.problems
+        else "Every claim is backed by evidence"
+    )
     outcome.state = RunState.DRAFT_HELD if outcome.problems else RunState.DRAFT_READY
 
 
 def _describe_identity(identity: Identity) -> str:
     c = identity.contact
-    who = f"{c.person_name or 'company only'} at {c.company_name}" if c else ""
-    if identity.candidates:
-        who = f"{len(identity.candidates)} candidates"
-    return f"{identity.status.value}: {who}" if who else identity.status.value
+    if identity.status is IdentityStatus.CONFIRMED and c:
+        return f"Confirmed {c.person_name or 'the company'} at {c.company_name}"
+    if identity.status is IdentityStatus.MOVED and c:
+        return f"Now at {c.company_name}"
+    if identity.status is IdentityStatus.AMBIGUOUS:
+        return f"{_count(len(identity.candidates), 'possible match', 'possible matches')} found"
+    if identity.status is IdentityStatus.SUGGESTED:
+        return f"Suggested {_count(len(identity.candidates), 'contact')} to choose from"
+    return "Person not found; researching the company"
+
+
+def _count(n: int, singular: str, plural: str | None = None) -> str:
+    return f"{n} {singular if n == 1 else plural or singular + 's'}"
+
+
+STOP_REASONS = {
+    "coverage_met": "found enough to write",
+    "sufficient": "found enough to write",
+    "budget": "search budget reached",
+    "max_rounds": "round limit reached",
+    "diminishing_returns": "nothing new was turning up",
+    "no_new_queries": "no new leads to search",
+}
