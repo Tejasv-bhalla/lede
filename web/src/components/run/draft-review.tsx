@@ -26,13 +26,24 @@ type Segment =
   | { kind: 'text'; text: string }
   | { kind: 'claim'; text: string; verdict: ClaimVerdict; evidence?: Evidence; n?: number }
 
+/** Same length in, same length out: models mix in non-breaking spaces and odd hyphens, so
+ * matching ignores those differences while positions still map onto the original text. */
+function comparable(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[\u00a0\u2007\u202f\t\n]/g, ' ')
+    .replace(/[\u2010-\u2014\u2212]/g, '-')
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201c\u201d]/g, '"')
+}
+
 /** Find each checked claim in the email body, in order, without overlaps. */
 function segment(body: string, claims: ClaimVerdict[], byId: Map<string, Evidence>): Segment[] {
-  const lower = body.toLowerCase()
+  const lower = comparable(body)
   const spans = claims
     .map((verdict) => {
       const needle = verdict.claim.trim().replace(/[.!?]+$/, '')
-      const start = lower.indexOf(needle.toLowerCase())
+      const start = lower.indexOf(comparable(needle))
       return start < 0 || !needle ? null : { start, end: start + needle.length, verdict }
     })
     .filter((s): s is NonNullable<typeof s> => s !== null)
@@ -71,6 +82,16 @@ function ClaimMark({ seg }: { seg: Extract<Segment, { kind: 'claim' }> }) {
     timer.current = window.setTimeout(() => setOpen(false), 120)
   }
 
+  if (supported && !seg.evidence)
+    return (
+      <span
+        className="underline decoration-primary/60 decoration-dotted decoration-1 underline-offset-4"
+        title="Matches one of your approved product claims"
+      >
+        {seg.text}
+      </span>
+    )
+
   if (!supported)
     return (
       <span
@@ -103,13 +124,7 @@ function ClaimMark({ seg }: { seg: Extract<Segment, { kind: 'claim' }> }) {
         onMouseLeave={hide}
         onOpenAutoFocus={(e) => e.preventDefault()}
       >
-        {seg.evidence ? (
-          <SourceQuote e={seg.evidence} />
-        ) : (
-          <p className="text-sm text-muted-foreground">
-            Matches one of your approved product claims.
-          </p>
-        )}
+        {seg.evidence && <SourceQuote e={seg.evidence} />}
       </PopoverContent>
     </Popover>
   )
