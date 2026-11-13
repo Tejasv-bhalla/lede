@@ -323,3 +323,20 @@ async def test_links_that_are_not_in_the_evidence_are_flagged():
 
     assert outcome.state is RunState.DRAFT_HELD
     assert any("unknown_link" in p for p in outcome.problems)
+
+
+async def test_a_recency_window_the_seller_tightened_applies_to_the_draft():
+    strict = PROFILE.model_copy(update={"recency_windows_days": {Cat.OWN_CONTENT: 14}})
+    brief = merge_brief(
+        strict, Campaign(id="c1", name="Q4", objective="Book demos", persona_id="fin")
+    )
+    says_recently = Draft(
+        subject="Your podcast",
+        body="Priya, you recently said closing the books faster is your top priority. "
+        "Worth a short look?",
+    )
+    d = deps(candidates={PODCAST: [PODCAST_QUOTE]}, drafts=(says_recently,))
+    outcome = await run_prospect(PROSPECT, brief, d, rules=RULES, today=TODAY)
+
+    assert outcome.state is RunState.DRAFT_HELD  # episode is 24 days old; seller allows 14
+    assert any("unsupported_recency" in p for p in outcome.problems)

@@ -101,7 +101,11 @@ def _rules_for(
     """Tighten the workspace rules for this run: recency words only for a recent hook, and
     links only to pages we hold as evidence or to the seller's approved proof."""
     freshness = assess_recency(
-        hook.category, published_at=hook.published_at, event_date=hook.event_date, today=today
+        hook.category,
+        published_at=hook.published_at,
+        event_date=hook.event_date,
+        today=today,
+        overrides=brief.recency_windows_days,
     ).freshness
     allowed = {e.url for e in ledger} | {c.proof_url for c in brief.claims if c.proof_url}
     return replace(

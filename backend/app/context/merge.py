@@ -41,6 +41,7 @@ class MergedBrief:
     pains: list[str] = field(default_factory=list)
     signal_priorities: dict[SignalCategory, Priority] = field(default_factory=dict)
     hook_weights: dict[str, float] = field(default_factory=lambda: dict(DEFAULT_HOOK_WEIGHTS))
+    recency_windows_days: dict[SignalCategory, int] = field(default_factory=dict)
     provenance: dict[str, str] = field(default_factory=dict)
     issues: list[BriefIssue] = field(default_factory=list)
 
@@ -168,6 +169,7 @@ def merge_brief(profile: SellerProfile, campaign: Campaign) -> MergedBrief:
         pains=pains,
         signal_priorities=priorities,
         hook_weights=weights,
+        recency_windows_days=dict(profile.recency_windows_days),
         provenance={
             "persona": "profile",
             "objective": "campaign",
