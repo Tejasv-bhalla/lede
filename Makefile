@@ -26,7 +26,7 @@ test:
 backend-check: lint typecheck test
 
 web-check:  # types, lint, formatting, and a production build
-	cd $(WEB) && npm run check && npm run build
+	cd $(WEB) && npm run check && npx vite build --logLevel warn
 
 check: backend-check web-check
 
