@@ -1,4 +1,4 @@
-import { LayoutDashboard, LockKeyhole, Moon, Settings2, Sun, Users } from 'lucide-react'
+import { Cpu, LayoutDashboard, LockKeyhole, Moon, Settings2, Sun, Users } from 'lucide-react'
 import { NavLink, Outlet } from 'react-router-dom'
 
 import { setAccessCode } from '@/api/client'
@@ -9,6 +9,7 @@ const NAV = [
   { to: '/', label: 'Overview', icon: LayoutDashboard, end: true },
   { to: '/campaigns', label: 'Campaigns', icon: Users, end: false },
   { to: '/setup', label: 'Seller profile', icon: Settings2, end: false },
+  { to: '/models', label: 'Models', icon: Cpu, end: false },
 ]
 
 export function AppShell() {

@@ -255,3 +255,37 @@ export interface QuotaLine {
   limit: number
   unit: string
 }
+
+// ── model settings ──────────────────────────────────────────────────────────
+
+export type ModelRole = 'reader' | 'judge' | 'writer' | 'checker'
+export type ProviderId = 'anthropic' | 'openai' | 'gemini' | 'groq' | 'openrouter' | 'custom'
+
+export interface ModelChoice {
+  provider: ProviderId
+  model: string
+}
+
+export interface ModelProvider {
+  id: ProviderId
+  label: string
+  suggested_models: string[]
+  needs_base_url: boolean
+  key_optional: boolean
+  has_key: boolean
+  key_hint: string | null
+  base_url: string | null
+}
+
+export interface ModelSettings {
+  can_save_keys: boolean
+  providers: ModelProvider[]
+  roles: Record<ModelRole, ModelChoice | null>
+  free: Record<ModelRole, string[]>
+}
+
+export interface ModelTest {
+  ok: boolean
+  latency_ms: number
+  error: string | null
+}

@@ -7,6 +7,11 @@ import type {
   Contact,
   CsvPreview,
   Dashboard,
+  ModelChoice,
+  ModelRole,
+  ModelSettings,
+  ModelTest,
+  ProviderId,
   Prospect,
   ProspectInput,
   Review,
@@ -25,6 +30,7 @@ export const keys = {
   runs: ['runs'] as const,
   run: (id: string) => ['runs', id] as const,
   dashboard: ['dashboard'] as const,
+  models: ['models'] as const,
 }
 
 export function useProfile() {
@@ -152,4 +158,45 @@ export function useReview(runId: string) {
 
 export function useDashboard() {
   return useQuery({ queryKey: keys.dashboard, queryFn: () => api.get<Dashboard>('/dashboard') })
+}
+
+// ── model settings ──────────────────────────────────────────────────────────
+
+export function useModels() {
+  return useQuery({ queryKey: keys.models, queryFn: () => api.get<ModelSettings>('/models') })
+}
+
+function useModelMutation<V>(fn: (v: V) => Promise<ModelSettings>) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: fn,
+    onSuccess: (data) => qc.setQueryData(keys.models, data),
+  })
+}
+
+export function useSaveKey() {
+  return useModelMutation((v: { provider: ProviderId; api_key: string; base_url?: string }) =>
+    api.put<ModelSettings>(`/models/keys/${v.provider}`, {
+      api_key: v.api_key,
+      base_url: v.base_url || null,
+    }),
+  )
+}
+
+export function useRemoveKey() {
+  return useModelMutation((provider: ProviderId) =>
+    api.del<ModelSettings>(`/models/keys/${provider}`),
+  )
+}
+
+export function useSaveRoles() {
+  return useModelMutation((roles: Partial<Record<ModelRole, ModelChoice | null>>) =>
+    api.put<ModelSettings>('/models/roles', roles),
+  )
+}
+
+export function useTestModel() {
+  return useMutation({
+    mutationFn: (choice: ModelChoice) => api.post<ModelTest>('/models/test', choice),
+  })
 }

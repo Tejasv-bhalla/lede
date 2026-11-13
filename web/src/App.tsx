@@ -13,6 +13,7 @@ const Campaigns = lazy(() => import('./pages/campaigns').then((m) => ({ default:
 const CampaignWorkspace = lazy(() =>
   import('./pages/campaign-workspace').then((m) => ({ default: m.CampaignWorkspace })),
 )
+const Models = lazy(() => import('./pages/models').then((m) => ({ default: m.Models })))
 const RunPage = lazy(() => import('./pages/run-page').then((m) => ({ default: m.RunPage })))
 
 export function App() {
@@ -35,6 +36,7 @@ export function App() {
           <Route path="campaigns" element={<Campaigns />} />
           <Route path="campaigns/:campaignId" element={<CampaignWorkspace />} />
           <Route path="runs/:runId" element={<RunPage />} />
+          <Route path="models" element={<Models />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>
