@@ -11,6 +11,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import date
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Literal
 
 from app.context.merge import MergedBrief
@@ -443,7 +444,8 @@ async def _stages(
     samples = await _score(eligible, deps.scorer, brief)
     ranking = outcome.ranking = rank_hooks(ledger, samples, weights=brief.hook_weights)
     events.done(
-        f"Best opener scores {ranking.ranked[0].total:.1f} of 5: {ranking.ranked[0].evidence.claim}"
+        f"Best opener scores {_one_decimal(ranking.ranked[0].total)} of 5: "
+        f"{ranking.ranked[0].evidence.claim}"
         if ranking.ranked
         else "Nothing usable as an opener"
     )
@@ -496,6 +498,12 @@ def _describe_identity(identity: Identity, *, company_only: bool = False) -> str
     if identity.status is IdentityStatus.SUGGESTED:
         return f"Suggested {_count(len(identity.candidates), 'contact')} to choose from"
     return "Person not found; researching the company"
+
+
+def _one_decimal(x: float) -> str:
+    """Round the way the web app's toFixed(1) does (exact value, ties up), so the timeline and
+    the scoreboard never disagree: 4.25 is 4.3 in both, not 4.2 here and 4.3 there."""
+    return str(Decimal(x).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP))
 
 
 def _count(n: int, singular: str, plural: str | None = None) -> str:
