@@ -4,17 +4,24 @@ from __future__ import annotations
 
 import csv
 import hmac
+import json
+from collections.abc import AsyncIterator, Callable
 from dataclasses import asdict
+from datetime import date
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Request, UploadFile
 from pydantic import BaseModel
+from sse_starlette import EventSourceResponse
 
 from app.batch.csv_import import CsvFormatError, read_prospects
 from app.config import Settings
 from app.context.merge import merge_brief
 from app.db.store import Store
-from app.domain.models import Campaign, ProspectInput, SellerProfile
+from app.domain.models import Campaign, ProspectInput, RunState, SellerProfile, Tier
+from app.pipeline.ports import Contact
+from app.pipeline.run import PipelineDeps
+from app.services.runs import NotFound, NotReady, RunService
 
 MAX_CSV_BYTES = 1_000_000
 
@@ -157,10 +164,71 @@ async def import_prospects_csv(
     }
 
 
-def create_app(settings: Settings, *, store: Store) -> FastAPI:
+class RunRequest(BaseModel):
+    prospect_id: int
+    tier: Tier = Tier.STANDARD
+    pinned_identity: Contact | None = None  # the rep's pick after NEEDS_CLARIFICATION
+
+
+def _runs(request: Request) -> RunService:
+    runs: RunService | None = request.app.state.runs
+    if runs is None:
+        raise HTTPException(503, "No AI providers are configured; add API keys to .env.")
+    return runs
+
+
+RunsDep = Annotated[RunService, Depends(_runs)]
+
+
+@api.post("/runs", status_code=202)
+async def start_run(body: RunRequest, runs: RunsDep) -> dict[str, str]:
+    try:
+        run_id = await runs.start(body.prospect_id, body.tier, body.pinned_identity)
+    except NotFound as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except NotReady as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {"run_id": run_id}
+
+
+@api.get("/runs")
+async def list_runs(
+    store: StoreDep, campaign_id: str | None = None, state: RunState | None = None
+) -> list[dict[str, Any]]:
+    return await store.list_runs(campaign_id=campaign_id, state=state.value if state else None)
+
+
+@api.get("/runs/{run_id}")
+async def get_run(run_id: str, runs: RunsDep) -> dict[str, Any]:
+    try:
+        return await runs.detail(run_id)
+    except NotFound as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@api.get("/runs/{run_id}/events")
+async def run_events(run_id: str, runs: RunsDep) -> EventSourceResponse:
+    """Server-sent events: replays what happened so far, then follows the run live."""
+    await get_run(run_id, runs)  # 404 before the stream opens
+
+    async def stream() -> AsyncIterator[dict[str, str]]:
+        async for event in runs.follow(run_id):
+            yield {"event": "stage", "data": json.dumps(event)}
+
+    return EventSourceResponse(stream(), ping=15)
+
+
+def create_app(
+    settings: Settings,
+    *,
+    store: Store,
+    deps_factory: Callable[[], PipelineDeps] | None = None,
+    today: Callable[[], date] = date.today,
+) -> FastAPI:
     app = FastAPI(title="Signal to Draft", version="0.1.0")
     app.state.settings = settings
     app.state.store = store
+    app.state.runs = RunService(store, deps_factory, today) if deps_factory else None
     app.include_router(public)
     app.include_router(api)
     return app

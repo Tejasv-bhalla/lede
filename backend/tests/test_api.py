@@ -1,4 +1,5 @@
-from collections.abc import AsyncIterator
+import json
+from collections.abc import AsyncIterator, Callable
 
 import httpx
 import pytest
@@ -7,6 +8,9 @@ from pydantic import SecretStr
 from app.api.app import create_app
 from app.config import Settings
 from app.db.store import Store
+from app.pipeline.ports import Identity, IdentityStatus
+from app.pipeline.run import PipelineDeps
+from tests.scenario import PODCAST_QUOTE, PRIYA, TODAY, deps
 
 CODE = "open-sesame"
 AUTH = {"X-Access-Code": CODE}
@@ -20,10 +24,21 @@ PROFILE = {
 
 
 @pytest.fixture
-async def client(tmp_path) -> AsyncIterator[httpx.AsyncClient]:
+def world() -> dict[str, Callable[[], PipelineDeps]]:
+    """The scripted outside world each run sees; a test may swap it before starting runs."""
+    return {"deps": lambda: deps(scores={PODCAST_QUOTE.claim: 4.5})}
+
+
+@pytest.fixture
+async def client(tmp_path, world) -> AsyncIterator[httpx.AsyncClient]:
     store = Store(f"sqlite:///{tmp_path / 'test.db'}")
     await store.create_all()
-    app = create_app(Settings(demo_access_code=SecretStr(CODE)), store=store)
+    app = create_app(
+        Settings(demo_access_code=SecretStr(CODE)),
+        store=store,
+        deps_factory=lambda: world["deps"](),
+        today=lambda: TODAY,
+    )
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as c:
@@ -188,3 +203,92 @@ async def test_a_csv_over_the_row_limit_is_rejected_before_anything_is_saved(cli
     assert r.status_code == 422
     assert "500" in r.json()["detail"]
     assert (await client.get(f"/api/campaigns/{cid}/prospects", headers=AUTH)).json() == []
+
+
+# ── runs ─────────────────────────────────────────────────────────────────────
+
+PRIYA_ROW = {"company_name": "Acme", "person_name": "Priya Shah", "company_domain": "acme.example"}
+
+
+async def ready_prospect(client) -> tuple[str, int]:
+    await client.put("/api/profile", json=PROFILE, headers=AUTH)
+    cid = await new_campaign(client)
+    r = await client.post(f"/api/campaigns/{cid}/prospects", json=PRIYA_ROW, headers=AUTH)
+    return cid, r.json()["id"]
+
+
+async def start_run(client, **body) -> str:
+    r = await client.post("/api/runs", json=body, headers=AUTH)
+    assert r.status_code == 202, r.text
+    return r.json()["run_id"]
+
+
+async def events_of(client, run_id: str) -> list[dict]:
+    async with client.stream("GET", f"/api/runs/{run_id}/events", headers=AUTH) as r:
+        assert r.headers["content-type"].startswith("text/event-stream")
+        return [
+            json.loads(line.removeprefix("data:").strip())
+            async for line in r.aiter_lines()
+            if line.startswith("data:")
+        ]
+
+
+async def test_a_run_streams_its_stages_and_its_detail_shows_evidence_hooks_and_draft(client):
+    cid, pid = await ready_prospect(client)
+    run_id = await start_run(client, prospect_id=pid, tier="standard")
+
+    events = await events_of(client, run_id)
+    assert events[0] == {"stage": "identity", "status": "started", "summary": ""}
+    assert events[-1] == {"stage": "run", "status": "finished", "summary": "DRAFT_READY"}
+
+    run = (await client.get(f"/api/runs/{run_id}", headers=AUTH)).json()
+    assert (run["state"], run["campaign_id"], run["tier"]) == ("DRAFT_READY", cid, "standard")
+    assert run["prospect"]["person_name"] == "Priya Shah"
+    assert run["brief"]["objective"] == "Book demos with finance leaders"
+    assert {e["claim"] for e in run["outcome"]["research"]["ledger"]} >= {PODCAST_QUOTE.claim}
+    assert run["outcome"]["ranking"]["ranked"][0]["evidence"]["claim"] == PODCAST_QUOTE.claim
+    assert run["outcome"]["draft"]["subject"] == "Closing the books faster"
+    assert run["events"] == events
+
+
+async def test_run_history_is_filtered_by_campaign_and_state(client, world):
+    cid, pid = await ready_prospect(client)
+    ready = await start_run(client, prospect_id=pid, tier="quick")
+    await events_of(client, ready)
+    world["deps"] = lambda: deps(scores={PODCAST_QUOTE.claim: 1.0})
+    weak = await start_run(client, prospect_id=pid, tier="quick")
+    await events_of(client, weak)
+
+    everything = (await client.get("/api/runs", params={"campaign_id": cid}, headers=AUTH)).json()
+    assert {r["id"]: r["state"] for r in everything} == {ready: "DRAFT_READY", weak: "LOW_SIGNAL"}
+    low = (await client.get("/api/runs", params={"state": "LOW_SIGNAL"}, headers=AUTH)).json()
+    assert [r["id"] for r in low] == [weak]
+    assert low[0]["prospect"]["company_name"] == "Acme"
+
+
+async def test_a_paused_run_is_resumed_with_the_contact_the_rep_picked(client, world):
+    _, pid = await ready_prospect(client)
+    world["deps"] = lambda: deps(
+        identity=Identity(IdentityStatus.AMBIGUOUS, candidates=(PRIYA,)),
+        scores={PODCAST_QUOTE.claim: 4.5},
+    )
+    paused = await start_run(client, prospect_id=pid, tier="standard")
+    await events_of(client, paused)
+    detail = (await client.get(f"/api/runs/{paused}", headers=AUTH)).json()
+    assert detail["state"] == "NEEDS_CLARIFICATION"
+    picked = detail["outcome"]["identity"]["candidates"][0]
+
+    resumed = await start_run(client, prospect_id=pid, tier="standard", pinned_identity=picked)
+    assert (await events_of(client, resumed))[-1]["summary"] == "DRAFT_READY"
+
+
+async def test_starting_a_run_needs_a_known_prospect_and_a_seller_profile(client):
+    r = await client.post("/api/runs", json={"prospect_id": 999, "tier": "quick"}, headers=AUTH)
+    assert r.status_code == 404
+
+    cid = await new_campaign(client)
+    pid = (
+        await client.post(f"/api/campaigns/{cid}/prospects", json=PRIYA_ROW, headers=AUTH)
+    ).json()["id"]
+    r = await client.post("/api/runs", json={"prospect_id": pid, "tier": "quick"}, headers=AUTH)
+    assert r.status_code == 409

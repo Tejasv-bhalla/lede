@@ -60,6 +60,32 @@ class ProspectRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
+class RunRow(Base):
+    __tablename__ = "runs"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    campaign_id: Mapped[str] = mapped_column(ForeignKey("campaigns.id"), index=True)
+    prospect_id: Mapped[int] = mapped_column(ForeignKey("prospects.id"), index=True)
+    tier: Mapped[str] = mapped_column(String(16))
+    state: Mapped[str] = mapped_column(String(32), index=True)
+    inputs: Mapped[dict[str, Any]] = mapped_column(Json)  # prospect, brief, pinned identity
+    outcome: Mapped[dict[str, Any] | None] = mapped_column(Json, nullable=True)
+    events: Mapped[list[dict[str, Any]]] = mapped_column(Json, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    def summary(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "campaign_id": self.campaign_id,
+            "prospect_id": self.prospect_id,
+            "tier": self.tier,
+            "state": self.state,
+            "prospect": self.inputs["prospect"],
+            "created_at": self.created_at.isoformat(),
+            "finished_at": self.finished_at.isoformat() if self.finished_at else None,
+        }
+
+
 class Store:
     def __init__(self, url: str) -> None:
         self._engine = create_async_engine(async_url(url))
@@ -140,3 +166,59 @@ class Store:
         async with self.session() as s:
             row = await s.get(ProspectRow, prospect_id)
             return (row.campaign_id, row.data) if row else None
+
+    # ── runs ──────────────────────────────────────────────────────────────────
+
+    async def create_run(
+        self,
+        run_id: str,
+        *,
+        campaign_id: str,
+        prospect_id: int,
+        tier: str,
+        inputs: dict[str, Any],
+    ) -> None:
+        async with self.session() as s, s.begin():
+            s.add(
+                RunRow(
+                    id=run_id,
+                    campaign_id=campaign_id,
+                    prospect_id=prospect_id,
+                    tier=tier,
+                    state="RUNNING",
+                    inputs=inputs,
+                    events=[],
+                )
+            )
+
+    async def finish_run(
+        self, run_id: str, *, state: str, outcome: dict[str, Any], events: list[dict[str, Any]]
+    ) -> None:
+        async with self.session() as s, s.begin():
+            row = await s.get(RunRow, run_id)
+            assert row is not None
+            row.state, row.outcome, row.events, row.finished_at = state, outcome, events, _now()
+
+    async def list_runs(
+        self, *, campaign_id: str | None = None, state: str | None = None
+    ) -> list[dict[str, Any]]:
+        query = select(RunRow).order_by(RunRow.created_at.desc())
+        if campaign_id:
+            query = query.where(RunRow.campaign_id == campaign_id)
+        if state:
+            query = query.where(RunRow.state == state)
+        async with self.session() as s:
+            return [r.summary() for r in await s.scalars(query)]
+
+    async def get_run(self, run_id: str) -> dict[str, Any] | None:
+        async with self.session() as s:
+            row = await s.get(RunRow, run_id)
+            if row is None:
+                return None
+            return {
+                **row.summary(),
+                "brief": row.inputs["brief"],
+                "pinned_identity": row.inputs.get("pinned_identity"),
+                "outcome": row.outcome,
+                "events": list(row.events),
+            }
