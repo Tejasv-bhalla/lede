@@ -1,10 +1,17 @@
+import asyncio
 import json
 
 import httpx2 as httpx  # the HTTP library the openai SDK is built on
 import pytest
 from pydantic import BaseModel
 
-from app.providers.llm_router import LLMRouter, LLMUnavailable, Provider
+from app.providers.llm_router import (
+    MAX_IN_FLIGHT,
+    OVERLOAD_COOLDOWN_S,
+    LLMRouter,
+    LLMUnavailable,
+    Provider,
+)
 
 
 class Verdict(BaseModel):
@@ -133,3 +140,89 @@ def test_a_role_without_any_configured_provider_is_reported_missing():
     assert router.has_role("checker")
     assert not router.has_role("writer")
     assert not router.has_role("judge")
+
+
+# ── pacing under free-tier limits ─────────────────────────────────────────────
+
+
+class FakeTime:
+    """A clock and a sleep that advance together, so waiting costs no real time."""
+
+    def __init__(self) -> None:
+        self.now = 1000.0
+        self.slept: list[float] = []
+
+    def clock(self) -> float:
+        return self.now
+
+    async def sleep(self, seconds: float) -> None:
+        self.slept.append(seconds)
+        self.now += seconds
+
+
+def paced(handler, routes) -> tuple[LLMRouter, FakeTime]:
+    router = router_with(handler, routes)
+    t = FakeTime()
+    router.clock, router.sleep = t.clock, t.sleep
+    return router, t
+
+
+async def test_when_every_provider_is_rate_limited_the_router_waits_for_the_soonest_one():
+    calls: list[str] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        calls.append(req.url.host)
+        if len(calls) == 1:
+            return httpx.Response(429, json={}, headers={"retry-after": "3"})
+        return completion(VALID)
+
+    router, t = paced(handler, {"checker": [GROQ]})
+    result = await router.structured("checker", "q", Verdict)
+
+    assert result.provider == "groq"
+    assert t.slept == [3.0]  # the provider's own Retry-After, not a fixed penalty
+    assert calls == ["groq.test", "groq.test"]
+
+
+async def test_the_router_gives_up_when_the_wait_would_be_too_long():
+    router, t = paced(
+        lambda req: httpx.Response(429, json={}, headers={"retry-after": "600"}),
+        {"checker": [GROQ]},
+    )
+    with pytest.raises(LLMUnavailable):
+        await router.structured("checker", "q", Verdict)
+    assert t.slept == []
+
+
+async def test_an_overloaded_model_is_rested_briefly_instead_of_retried_on_every_call():
+    calls: list[str] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        calls.append(req.url.host)
+        if req.url.host == "gemini.test":
+            return httpx.Response(503, json={"error": {"message": "high demand"}})
+        return completion(VALID)
+
+    router, t = paced(handler, {"writer": [GEMINI, GROQ]})
+    await router.structured("writer", "q1", Verdict)
+    await router.structured("writer", "q2", Verdict)  # gemini resting: straight to groq
+    t.now += OVERLOAD_COOLDOWN_S + 1
+    await router.structured("writer", "q3", Verdict)
+    assert calls == ["gemini.test", "groq.test", "groq.test", "gemini.test", "groq.test"]
+
+
+async def test_each_model_has_a_cap_on_calls_in_flight():
+    in_flight = 0
+    peak = 0
+
+    async def slow_handler(req: httpx.Request) -> httpx.Response:
+        nonlocal in_flight, peak
+        in_flight += 1
+        peak = max(peak, in_flight)
+        await asyncio.sleep(0.01)
+        in_flight -= 1
+        return completion(VALID)
+
+    router = router_with(slow_handler, {"checker": [GROQ]})
+    await asyncio.gather(*(router.structured("checker", f"q{i}", Verdict) for i in range(10)))
+    assert peak == MAX_IN_FLIGHT

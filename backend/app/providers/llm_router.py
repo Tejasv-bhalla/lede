@@ -8,9 +8,10 @@ or repeated invalid output move the request to the next provider in the role's c
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -20,7 +21,10 @@ from openai.types.chat import ChatCompletionMessageParam
 from pydantic import BaseModel, ValidationError
 
 JSON_RETRIES = 1  # corrective retries per provider before falling back
-RATE_LIMIT_COOLDOWN_S = 60.0  # skip a provider this long after it rate-limits us
+RATE_LIMIT_COOLDOWN_S = 60.0  # rest after a rate limit when the provider doesn't say how long
+OVERLOAD_COOLDOWN_S = 30.0  # rest after "overloaded" (503/529): usually brief demand spikes
+MAX_WAIT_S = 30.0  # when the whole chain is resting, wait at most this long for one to return
+MAX_IN_FLIGHT = 3  # concurrent calls per model: bursts are what trip per-minute free limits
 
 
 class LLMUnavailable(RuntimeError):
@@ -75,8 +79,10 @@ class LLMRouter:
             for p in providers
         }
         self._cooldown_until: dict[str, float] = {}
+        self._slots = {name: asyncio.Semaphore(MAX_IN_FLIGHT) for name in self._clients}
         self._usage_sinks: list[Callable[[UsageRecord], None]] = []
         self.clock: Callable[[], float] = time.monotonic
+        self.sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
 
     def has_role(self, role: str) -> bool:
         return bool(self._routes.get(role))
@@ -87,21 +93,41 @@ class LLMRouter:
     async def structured[M: BaseModel](
         self, role: str, prompt: str, schema: type[M]
     ) -> Structured[M]:
-        failures: list[str] = []
-        for provider in self._routes[role]:
-            if self._cooldown_until.get(provider.name, 0.0) > self.clock():
-                failures.append(f"{provider.name}: cooling down after a rate limit")
-                continue
-            try:
-                return await self._ask(role, provider, prompt, schema)
-            except RateLimitError:
-                self._cooldown_until[provider.name] = self.clock() + RATE_LIMIT_COOLDOWN_S
-                failures.append(f"{provider.name}: rate limited")
-            except (APIStatusError, APIConnectionError) as exc:
-                failures.append(f"{provider.name}: {type(exc).__name__}")
-            except ValidationError:
-                failures.append(f"{provider.name}: invalid JSON")
-        raise LLMUnavailable(f"All providers failed for role '{role}': {'; '.join(failures)}")
+        """Ask the role's providers in order. If they are all resting after rate limits or
+        overloads, wait for the soonest one (up to MAX_WAIT_S) rather than failing the run."""
+        deadline = self.clock() + MAX_WAIT_S
+        while True:
+            failures: list[str] = []
+            for provider in self._routes[role]:
+                if self._cooldown_until.get(provider.name, 0.0) > self.clock():
+                    failures.append(f"{provider.name}: resting after a rate limit or overload")
+                    continue
+                try:
+                    async with self._slots[provider.name]:
+                        return await self._ask(role, provider, prompt, schema)
+                except RateLimitError as exc:
+                    self._rest(provider, _retry_after(exc) or RATE_LIMIT_COOLDOWN_S)
+                    failures.append(f"{provider.name}: rate limited")
+                except APIStatusError as exc:
+                    if exc.status_code in (503, 529):
+                        self._rest(provider, OVERLOAD_COOLDOWN_S)
+                    failures.append(f"{provider.name}: {type(exc).__name__}")
+                except APIConnectionError as exc:
+                    failures.append(f"{provider.name}: {type(exc).__name__}")
+                except ValidationError:
+                    failures.append(f"{provider.name}: invalid JSON")
+            soonest = min(
+                (self._cooldown_until.get(p.name, 0.0) for p in self._routes[role]),
+                default=0.0,
+            )
+            if not (self.clock() < soonest <= deadline):
+                raise LLMUnavailable(
+                    f"All providers failed for role '{role}': {'; '.join(failures)}"
+                )
+            await self.sleep(soonest - self.clock())
+
+    def _rest(self, provider: Provider, seconds: float) -> None:
+        self._cooldown_until[provider.name] = self.clock() + seconds
 
     async def _ask[M: BaseModel](
         self, role: str, provider: Provider, prompt: str, schema: type[M]
@@ -147,3 +173,11 @@ class LLMRouter:
         )
         for sink in self._usage_sinks:
             sink(record)
+
+
+def _retry_after(exc: APIStatusError) -> float | None:
+    """Seconds the provider asked us to wait, if it said."""
+    try:
+        return float(exc.response.headers.get("retry-after", ""))
+    except ValueError:
+        return None
