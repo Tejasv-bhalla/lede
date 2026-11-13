@@ -103,6 +103,18 @@ async def test_campaigns_are_created_listed_read_and_updated(client):
     assert (await client.get("/api/campaigns/nope", headers=AUTH)).status_code == 404
 
 
+async def test_stray_spaces_and_tabs_around_a_campaign_name_are_dropped(client):
+    created = await client.post(
+        "/api/campaigns",
+        json={**CAMPAIGN, "name": "\tFree avatar pilot  ", "objective": " Book demos \n"},
+        headers=AUTH,
+    )
+    assert (created.json()["name"], created.json()["objective"]) == (
+        "Free avatar pilot",
+        "Book demos",
+    )
+
+
 async def test_deleting_a_campaign_removes_its_prospects_runs_and_drafts_only(client):
     doomed = await finished_run(client)
     doomed_cid = (await client.get(f"/api/runs/{doomed}", headers=AUTH)).json()["campaign_id"]

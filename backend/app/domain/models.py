@@ -208,6 +208,12 @@ class Campaign(_Model):
     id: str = Field(default_factory=lambda: uuid4().hex[:12])
     name: str
     objective: str
+
+    @field_validator("name", "objective")
+    @classmethod
+    def _trimmed(cls, value: str) -> str:
+        return value.strip()  # a pasted tab or space must not make two names look alike
+
     persona_id: str
     segment: Segment = Field(default_factory=Segment)
     angle: str = ""
