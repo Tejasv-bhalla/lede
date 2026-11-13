@@ -103,3 +103,21 @@ export function ago(iso: string | null | undefined): string {
   const n = Math.floor(seconds / unit[0])
   return `${n} ${unit[1]}${n === 1 ? '' : 's'} ago`
 }
+
+const ROLE_WORK: Record<string, string> = {
+  judge: 'planning and scoring',
+  writer: 'writing',
+  reader: 'reading pages',
+  checker: 'checking claims',
+}
+
+/** Turn a technical failure into a sentence for the rep, keeping the detail for whoever needs it. */
+export function friendly(problem: string): { text: string; detail?: string } {
+  const busy = /^All providers failed for role '(\w+)'/.exec(problem)
+  if (busy)
+    return {
+      text: `The free AI models for ${ROLE_WORK[busy[1]] ?? busy[1]} were all busy. Run it again in a minute; search results are cached, so a re-run costs little search quota.`,
+      detail: problem,
+    }
+  return { text: problem }
+}

@@ -20,6 +20,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 
 import { SourceQuote } from './evidence'
+import { Problem } from './problem'
 
 type Segment =
   | { kind: 'text'; text: string }
@@ -226,7 +227,7 @@ export function DraftReview({
           </p>
           <ul className="mt-1.5 list-disc pl-6 text-muted-foreground">
             {problems.map((p) => (
-              <li key={p}>{p}</li>
+              <Problem key={p} problem={p} />
             ))}
           </ul>
         </div>

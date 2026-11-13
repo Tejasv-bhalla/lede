@@ -1,6 +1,7 @@
 import { Check, Circle, LoaderCircle, X } from 'lucide-react'
 
 import { type StageView, type TimedEvent, stageViews } from '@/lib/stages'
+import { friendly } from '@/lib/status'
 import { cn } from '@/lib/utils'
 
 export function StageTimeline({
@@ -50,7 +51,7 @@ export function StageTimeline({
                   v.status === 'failed' ? 'text-destructive' : 'text-muted-foreground',
                 )}
               >
-                {v.summary}
+                {v.status === 'failed' ? friendly(v.summary).text : v.summary}
               </p>
             )}
             {v.status === 'running' && !compact && v.found.length > 0 && (

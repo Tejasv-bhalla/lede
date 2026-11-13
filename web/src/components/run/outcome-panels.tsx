@@ -7,6 +7,8 @@ import type { Contact, RunDetail, Tier } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { STATE } from '@/lib/status'
 
+import { Problem } from './problem'
+
 import { host } from '@/lib/evidence'
 
 function usePinnedRun(run: RunDetail) {
@@ -133,7 +135,7 @@ export function NoDraft({ run }: { run: RunDetail }) {
       {problems.length > 0 && (
         <ul className="mt-3 list-disc pl-5 text-sm text-muted-foreground">
           {problems.map((p) => (
-            <li key={p}>{p}</li>
+            <Problem key={p} problem={p} />
           ))}
         </ul>
       )}
