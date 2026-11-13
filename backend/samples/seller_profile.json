@@ -1,0 +1,34 @@
+{
+  "company": {
+    "name": "Ledgerly",
+    "domain": "ledgerly.example",
+    "one_liner": "AI that closes the books faster for finance teams"
+  },
+  "offer": {
+    "product": "Ledgerly Close",
+    "problem_solved": "month-end close takes too long because reconciliations and accruals are manual",
+    "how_it_works": "matches transactions, drafts accruals and flags anomalies for review"
+  },
+  "icp": {"industries": ["fintech", "saas"], "employee_min": 200, "regions": ["US", "UK"]},
+  "personas": [
+    {
+      "id": "finance_leader",
+      "title_patterns": ["CFO", "VP Finance", "Controller", "CEO"],
+      "seniority": "c_level",
+      "pains": ["month-end close takes too long", "finance team spends days on reconciliations"],
+      "hook_preference": "company"
+    }
+  ],
+  "signal_to_pain": {
+    "funding_mna": ["more entities and complexity to consolidate"],
+    "hiring_pattern": ["growing finance team signals manual work"],
+    "product_launch": ["new revenue streams complicate the close"]
+  },
+  "approved_claims": [
+    {"id": "c1", "text": "Ledgerly matches transactions and drafts reconciliations automatically"},
+    {"id": "c2", "text": "Teams review exceptions instead of every line"}
+  ],
+  "never_claims": ["guaranteed savings", "replaces your accountants"],
+  "tone": {"voice": "plain, warm, specific", "max_words": 100, "cta_style": "soft"},
+  "footer": "Ledgerly, 1 Example St. Reply 'no thanks' and I won't write again."
+}
