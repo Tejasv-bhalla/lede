@@ -19,7 +19,7 @@ from app.policy.quotes import verify_quote
 from app.providers.llm_router import LLMRouter
 from app.research.ports import PlannedQuery, ResearchTarget, Searcher, SearchHit
 
-PROMPT_VERSION = "identity-v2"
+PROMPT_VERSION = "identity-v3"
 MAX_RESULTS = 12
 TITLES_PER_QUERY = 4
 MAX_TITLE_QUERIES = 2
@@ -170,7 +170,8 @@ Search results:
 Suggest up to 3 people who CURRENTLY work at {company} in or near those roles, best first. If
 nobody in those roles is shown, suggest {company}'s top leader ({", ".join(LEADER_TITLES)}) when
 a result shows one. Only people the results actually show; never invent a name. For each:
-`result` is the number of the result that shows it, `quote` copied EXACTLY from that result's
+`title` is their job title as the result states it, `result` is the number of the result that
+shows it, `quote` copied EXACTLY from that result's
 title or text. If nobody fits, return no suggestions. Also give {company}'s own website domain
 if a result shows it."""
         out = (await self._router.structured("judge", prompt, SuggestionOut)).value
