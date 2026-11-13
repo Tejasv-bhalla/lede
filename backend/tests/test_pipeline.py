@@ -523,6 +523,42 @@ async def test_one_page_cannot_fill_the_shortlist():
     assert len(scored & {c.claim for c in same_page}) == 2
 
 
+async def test_the_same_fact_found_twice_takes_one_place_on_the_shortlist():
+    press = "https://acme.example/press"
+    text = (
+        "Acme opened a Berlin office for its European customers. "
+        "Our new Berlin office will serve customers across Europe."
+    )
+    twice = [
+        Candidate(
+            Cat.EXPANSION,
+            About.COMPANY,
+            "Acme opened a Berlin office.",
+            "Acme opened a Berlin office for its European customers",
+        ),
+        Candidate(
+            Cat.EXPANSION,
+            About.COMPANY,
+            "acme opened a  Berlin office",
+            "Our new Berlin office will serve customers across Europe",
+        ),
+    ]
+    pages = {
+        press: Page(url=press, text=text, published_at=date(2026, 11, 5)),
+        NEWS: Page(
+            url=NEWS,
+            text="Acme raised a $40 million Series B led by Example Ventures on Monday.",
+            published_at=date(2026, 11, 3),
+        ),
+    }
+    d = deps(pages=pages, candidates={press: twice, NEWS: [RAISE]}, scores={})
+    await run(d, max_hook_candidates=2)
+
+    scored = set(d.scorer.scored)  # type: ignore[attr-defined]
+    assert len({c for c in scored if "Berlin" in c}) == 1
+    assert RAISE.claim in scored
+
+
 async def test_the_final_claim_by_claim_verdicts_are_kept_for_the_reviewer():
     d = deps(drafts=(DRAFT_WITH_INVENTED_METRIC,), unsupported_sentences=(INVENTED,))
     outcome = await run(d)

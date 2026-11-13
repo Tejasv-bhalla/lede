@@ -7,6 +7,7 @@ an honest state (moved, ambiguous, low signal, sensitive) instead of forcing a w
 from __future__ import annotations
 
 import asyncio
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import date
@@ -111,12 +112,17 @@ MAX_PER_PAGE = 2  # one rich page must not crowd out every other source
 _FRESHNESS_RANK = {Freshness.RECENT: 0, Freshness.UNDATED: 1, Freshness.STALE: 2}
 
 
+def _same_fact(claim: str) -> str:
+    """Claims that differ only in case, spacing or punctuation are the same fact."""
+    return " ".join(re.sub(r"[^\w\s]", " ", claim.casefold()).split())
+
+
 def _shortlist(
     ledger: list[Evidence], brief: MergedBrief, today: date, limit: int
 ) -> list[Evidence]:
     """Pick the facts worth spending AI calls on, using only what code already knows: campaign
     priority, freshness within the signal's window, person before company, source strength,
-    then age; at most MAX_PER_PAGE from any one page."""
+    then age; at most MAX_PER_PAGE from any one page, and each fact only once."""
 
     def key(e: Evidence) -> tuple[int, int, int, int, int]:
         when = e.event_date or e.published_at
@@ -137,10 +143,12 @@ def _shortlist(
 
     picked: list[Evidence] = []
     per_page: dict[str, int] = {}
+    seen: set[str] = set()
     for e in sorted((e for e in ledger if veto_reason(e) is None), key=key):
-        if per_page.get(e.url, 0) >= MAX_PER_PAGE:
+        if per_page.get(e.url, 0) >= MAX_PER_PAGE or _same_fact(e.claim) in seen:
             continue
         per_page[e.url] = per_page.get(e.url, 0) + 1
+        seen.add(_same_fact(e.claim))
         picked.append(e)
         if len(picked) == limit:
             break
