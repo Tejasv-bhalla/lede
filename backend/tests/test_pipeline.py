@@ -347,7 +347,7 @@ async def test_each_stage_reports_its_progress_for_the_live_view():
     events: list[StageEvent] = []
     await run(deps(scores={PODCAST_QUOTE.claim: 4.5}), on_event=events.append)
 
-    assert [(e.stage, e.status) for e in events] == [
+    assert [(e.stage, e.status) for e in events if e.status != "progress"] == [
         (stage, status)
         for stage in ("identity", "research", "verify", "score", "draft", "fact_check")
         for status in ("started", "done")
@@ -504,3 +504,13 @@ async def test_the_final_claim_by_claim_verdicts_are_kept_for_the_reviewer():
     d = deps(drafts=(DRAFT_WITH_INVENTED_METRIC,), unsupported_sentences=(INVENTED,))
     outcome = await run(d)
     assert [(c.claim, c.verdict) for c in outcome.claims] == [(INVENTED, Entailment.UNSUPPORTED)]
+
+
+async def test_research_reports_progress_between_its_start_and_end():
+    events: list[StageEvent] = []
+    await run(deps(scores={PODCAST_QUOTE.claim: 4.5}), on_event=events.append)
+
+    research = [e for e in events if e.stage == "research"]
+    assert [e.status for e in research] == ["started", "progress", "done"]
+    assert research[1].summary.startswith("Round 1:")
+    assert set(research[1].items) == {PODCAST_QUOTE.claim, HIRING.claim}

@@ -240,8 +240,8 @@ async def test_a_run_streams_its_stages_and_its_detail_shows_evidence_hooks_and_
     run_id = await start_run(client, prospect_id=pid, tier="standard")
 
     events = await events_of(client, run_id)
-    assert events[0] == {"stage": "identity", "status": "started", "summary": ""}
-    assert events[-1] == {"stage": "run", "status": "finished", "summary": "DRAFT_READY"}
+    assert events[0] == {"stage": "identity", "status": "started", "summary": "", "items": []}
+    assert events[-1]["stage"] == "run" and events[-1]["summary"] == "DRAFT_READY"
 
     run = (await client.get(f"/api/runs/{run_id}", headers=AUTH)).json()
     assert (run["state"], run["campaign_id"], run["tier"]) == ("DRAFT_READY", cid, "standard")

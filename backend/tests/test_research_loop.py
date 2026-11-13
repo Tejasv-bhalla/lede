@@ -2,7 +2,7 @@ from datetime import date
 
 from app.domain.models import About, EntityMatch, SourceType
 from app.domain.models import SignalCategory as Cat
-from app.research.loop import Budget, ResearchDeps, run_research
+from app.research.loop import Budget, ResearchDeps, RoundProgress, run_research
 from app.research.ports import Candidate, Page, PlannedQuery, Reflection, ResearchTarget, SearchHit
 from tests.fakes import FakeFetcher, FakePlanner, FakeReader, FakeReflector, FakeSearcher
 
@@ -225,3 +225,20 @@ async def test_searches_never_exceed_the_budget():
     assert result.searches_used == 4
     assert d.searcher.queries == ["q0", "q1", "q2", "q3"]
     assert result.stop_reason == "budget"
+
+
+async def test_progress_is_reported_after_every_round_with_the_new_facts():
+    d = two_round_deps(
+        [
+            Reflection(False, follow_up=(PlannedQuery(Cat.OWN_CONTENT, "q-podcast"),)),
+            Reflection(True),
+        ]
+    )
+    rounds: list[RoundProgress] = []
+    await run_research(TARGET, d, Budget(), on_round=rounds.append)
+
+    assert [(r.number, r.searches_used, r.pages_used, r.verified) for r in rounds] == [
+        (0, 1, 1, 1),
+        (1, 2, 2, 2),
+    ]
+    assert [r.new_claims for r in rounds] == [(HIRING.claim,), (PODCAST_QUOTE.claim,)]

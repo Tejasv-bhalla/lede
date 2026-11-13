@@ -45,6 +45,7 @@ from app.research.ports import ResearchTarget
 DRAFT_VARIANTS = 2  # best-of-N drafting
 MAX_REVISIONS = 2  # fact-check fix rounds before the draft is held for the rep
 MAX_HOOK_CANDIDATES = 12  # facts checked and scored per run; the rest stay as context
+MAX_PROGRESS_ITEMS = 6  # newest facts shown per research round in the live view
 SCORE_SAMPLES = 2  # independent judge samples per hook, averaged to steady the ranking
 
 # Identity results that stop the run until the rep decides.
@@ -71,7 +72,7 @@ class PipelineDeps:
     fact_checker: FactChecker
 
 
-EventStatus = Literal["started", "done", "failed", "finished"]
+EventStatus = Literal["started", "progress", "done", "failed", "finished"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,6 +80,7 @@ class StageEvent:
     stage: str  # identity | research | verify | score | draft | fact_check | run
     status: EventStatus
     summary: str  # one line for the live view; the final state for the "run" event
+    items: tuple[str, ...] = ()  # e.g. the facts a research round just verified
 
 
 @dataclass(slots=True)
@@ -280,13 +282,18 @@ class _Events:
         self._sink = sink
         self._stage = "run"
 
-    def _send(self, stage: str, status: EventStatus, summary: str) -> None:
+    def _send(
+        self, stage: str, status: EventStatus, summary: str, items: tuple[str, ...] = ()
+    ) -> None:
         if self._sink is not None:
-            self._sink(StageEvent(stage, status, summary))
+            self._sink(StageEvent(stage, status, summary, items))
 
     def started(self, stage: str) -> None:
         self._stage = stage
         self._send(stage, "started", "")
+
+    def progress(self, summary: str, items: tuple[str, ...] = ()) -> None:
+        self._send(self._stage, "progress", summary, items)
 
     def done(self, summary: str) -> None:
         self._send(self._stage, "done", summary)
@@ -338,7 +345,16 @@ async def _stages(
         pains=tuple(brief.pains),
         priorities=tuple(c for c, p in brief.signal_priorities.items() if p is Priority.HIGH),
     )
-    research = outcome.research = await run_research(target, deps.research, budget)
+    research = outcome.research = await run_research(
+        target,
+        deps.research,
+        budget,
+        on_round=lambda r: events.progress(
+            f"Round {r.number + 1}: {r.searches_used} searches, {r.pages_used} pages read, "
+            f"{r.verified} verified facts so far",
+            r.new_claims[:MAX_PROGRESS_ITEMS],
+        ),
+    )
     events.done(
         f"{len(research.ledger)} verified items from {research.pages_used} pages in "
         f"{research.rounds} round(s); stopped: {research.stop_reason}"

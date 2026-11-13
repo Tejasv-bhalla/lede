@@ -80,6 +80,17 @@ class ResearchResult:
     pages_used: int = 0
 
 
+@dataclass(frozen=True, slots=True)
+class RoundProgress:
+    """Reported after every round, so a person watching sees research move."""
+
+    number: int
+    searches_used: int
+    pages_used: int
+    verified: int
+    new_claims: tuple[str, ...]
+
+
 def _usable(e: Evidence) -> bool:
     return e.entity_match is EntityMatch.CONFIRMED and e.sensitivity is Sensitivity.NONE
 
@@ -210,6 +221,7 @@ async def run_research(
     budget: Budget,
     *,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
+    on_round: Callable[[RoundProgress], None] | None = None,
 ) -> ResearchResult:
     run = _Run(target, deps, budget, now)
     queries = run.fresh(await deps.planner.plan(target))
@@ -219,6 +231,16 @@ async def run_research(
         found_before = len(run.result.ledger)
         await run.round(number, queries)
         run.result.rounds = number + 1
+        if on_round is not None:
+            on_round(
+                RoundProgress(
+                    number=number,
+                    searches_used=run.result.searches_used,
+                    pages_used=run.result.pages_used,
+                    verified=len(run.result.ledger),
+                    new_claims=tuple(e.claim for e in run.result.ledger[found_before:]),
+                )
+            )
 
         if run.coverage_met:
             run.result.stop_reason = "coverage_met"
