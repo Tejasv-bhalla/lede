@@ -1,6 +1,9 @@
-# Signal to Draft
+# Lede
 
-Turns a sales prospect into an evidence-grounded, personalised outreach draft. The system researches
+*Lede* (pronounced "leed") is the journalist's word for the opening line of a story: the line that
+makes someone keep reading. This tool writes that line for sales outreach, and backs it with a source.
+
+Lede turns a sales prospect into an evidence-grounded, personalised outreach draft. It researches
 real public signals, checks every fact against its source, picks the hook that best fits the
 campaign, writes a short email and fact-checks it. A human approves every message; nothing is sent
 automatically.

@@ -20,8 +20,8 @@ export function App() {
 
   useEffect(() => {
     const lock = () => setUnlocked(false)
-    window.addEventListener('std:locked', lock)
-    return () => window.removeEventListener('std:locked', lock)
+    window.addEventListener('lede:locked', lock)
+    return () => window.removeEventListener('lede:locked', lock)
   }, [])
 
   if (!unlocked) return <AccessGate onUnlock={() => setUnlocked(true)} />

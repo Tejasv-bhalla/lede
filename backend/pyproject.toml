@@ -1,5 +1,5 @@
 [project]
-name = "signal-to-draft"
+name = "lede"
 version = "0.1.0"
 description = "Prospect -> evidence-grounded personalised outreach draft"
 requires-python = ">=3.12"

@@ -8,7 +8,7 @@ import pytest
 from app.providers.fetch import FetchBlocked, PageFetcher
 
 FIXTURES = Path(__file__).parent / "fixtures" / "pages"
-UA = "SignalToDraft/test"
+UA = "Lede/test"
 ARTICLE = "https://www.prnewswire.com/news-releases/ramp-raises-series-f-at-44-billion-valuation-302791103.html"
 JOBS = "https://jobs.ashbyhq.com/ramp"
 

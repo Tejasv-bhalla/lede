@@ -358,7 +358,7 @@ def create_app(
     today: Callable[[], date] = date.today,
     lifespan: Lifespan | None = None,
 ) -> FastAPI:
-    app = FastAPI(title="Signal to Draft", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="Lede", version="0.1.0", lifespan=lifespan)
     app.state.settings = settings
     app.state.store = store
     app.state.runs = RunService(store, deps_factory, today) if deps_factory else None

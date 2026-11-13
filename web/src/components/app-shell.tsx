@@ -51,7 +51,7 @@ export function AppShell() {
               type="button"
               onClick={() => {
                 setAccessCode(null)
-                window.dispatchEvent(new Event('std:locked'))
+                window.dispatchEvent(new Event('lede:locked'))
               }}
               className="flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sidebar-foreground/75 hover:bg-sidebar-accent hover:text-sidebar-foreground"
             >
@@ -72,9 +72,9 @@ export function Wordmark({ className }: { className?: string }) {
   return (
     <span className={cn('flex items-center gap-2 text-[0.95rem] font-semibold', className)}>
       <span aria-hidden className="evidence-mark font-serif text-lg leading-none">
-        S
+        L
       </span>
-      Signal to Draft
+      Lede
     </span>
   )
 }

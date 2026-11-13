@@ -1,6 +1,6 @@
 // A small typed client for the FastAPI backend. Every request carries the demo access code.
 
-const CODE_KEY = 'std.access-code'
+const CODE_KEY = 'lede.access-code'
 
 export function getAccessCode(): string | null {
   try {
@@ -64,7 +64,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   })
   if (res.status === 401) {
     setAccessCode(null)
-    window.dispatchEvent(new Event('std:locked'))
+    window.dispatchEvent(new Event('lede:locked'))
   }
   const text = await res.text()
   const data = text ? JSON.parse(text) : null

@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     demo_access_code: SecretStr | None = None
     sec_contact_email: str | None = None
     http_timeout_s: float = 10.0
-    user_agent: str = "SignalToDraft/0.1 (research prototype)"
+    user_agent: str = "Lede/0.1 (research prototype)"
 
 
 @lru_cache

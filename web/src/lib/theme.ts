@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 
 type Theme = 'light' | 'dark'
-const KEY = 'std.theme'
+const KEY = 'lede.theme'
 
 function initial(): Theme {
   try {
