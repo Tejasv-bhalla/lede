@@ -366,10 +366,21 @@ async def _stages(
         else await deps.resolver.resolve(prospect, brief)
     )
     contact = identity.contact
+    if identity.status is IdentityStatus.NOT_FOUND and not prospect.person_name:
+        # Nobody to write to: ask the rep for a contact rather than mail a nameless "Hi,".
+        outcome.notes.append("no_contact_found")
+        outcome.state = RunState.NEEDS_CLARIFICATION
+        events.done(_describe_identity(identity, company_only=True))
+        return
     if identity.status is IdentityStatus.NOT_FOUND:
+        # The rep named this person; the web can't confirm it, so research the company and
+        # still greet them by the name the rep gave.
         outcome.notes.append("person_not_found")
         contact = Contact(
-            company_name=prospect.company_name, company_domain=prospect.company_domain
+            company_name=prospect.company_name,
+            company_domain=prospect.company_domain,
+            person_name=prospect.person_name,
+            title=prospect.title,
         )
     events.done(_describe_identity(identity))
     if identity.status in _PAUSES:
@@ -458,8 +469,10 @@ async def _stages(
     outcome.state = RunState.DRAFT_HELD if outcome.problems else RunState.DRAFT_READY
 
 
-def _describe_identity(identity: Identity) -> str:
+def _describe_identity(identity: Identity, *, company_only: bool = False) -> str:
     c = identity.contact
+    if company_only:
+        return "Nobody found in the buyer's roles; add a contact to continue"
     if identity.status is IdentityStatus.CONFIRMED and c:
         return f"Confirmed {c.person_name or 'the company'} at {c.company_name}"
     if identity.status is IdentityStatus.MOVED and c:

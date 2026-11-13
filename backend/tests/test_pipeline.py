@@ -111,12 +111,35 @@ async def test_person_not_found_falls_back_to_company_research_with_a_note():
         scores={HIRING.claim: 4.0},
         candidates={CAREERS: [HIRING]},
     )
-    outcome = await run(d)
+    outcome = await run_prospect(
+        PROSPECT.model_copy(update={"title": "VP Finance"}), BRIEF, d, rules=RULES, today=TODAY
+    )
 
     assert outcome.state is RunState.DRAFT_READY
     contact = d.writer.requests[0].contact  # type: ignore[attr-defined]
-    assert (contact.company_name, contact.person_name) == ("Acme", None)
+    # The rep named this person, so the email still greets them by name.
+    assert (contact.company_name, contact.person_name, contact.title) == (
+        "Acme",
+        "Priya Shah",
+        "VP Finance",
+    )
     assert "person_not_found" in outcome.notes
+
+
+async def test_company_only_with_nobody_found_pauses_for_the_rep_to_add_a_contact():
+    d = deps(identity=Identity(IdentityStatus.NOT_FOUND))
+    outcome = await run_prospect(
+        ProspectInput(company_name="Acme", company_domain="acme.example"),
+        BRIEF,
+        d,
+        rules=RULES,
+        today=TODAY,
+    )
+
+    assert outcome.state is RunState.NEEDS_CLARIFICATION
+    assert "no_contact_found" in outcome.notes
+    assert d.research.searcher.queries == []  # type: ignore[attr-defined]
+    assert outcome.draft is None
 
 
 async def test_weak_signals_end_as_low_signal_without_writing_a_generic_email():
