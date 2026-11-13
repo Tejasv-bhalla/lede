@@ -506,8 +506,8 @@ def _count(n: int, singular: str, plural: str | None = None) -> str:
 
 
 STOP_REASONS = {
-    "coverage_met": "found enough to write",
-    "sufficient": "found enough to write",
+    "coverage_met": "every signal type covered",
+    "sufficient": "no more searching needed",
     "budget": "search budget reached",
     "max_rounds": "round limit reached",
     "diminishing_returns": "nothing new was turning up",
