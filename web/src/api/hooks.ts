@@ -75,6 +75,19 @@ export function useSaveCampaign() {
   })
 }
 
+export function useDeleteCampaign() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.del<null>(`/campaigns/${id}`),
+    onSuccess: (_, id) => {
+      qc.removeQueries({ queryKey: keys.campaign(id) })
+      qc.invalidateQueries({ queryKey: keys.campaigns })
+      qc.invalidateQueries({ queryKey: keys.runs })
+      qc.invalidateQueries({ queryKey: keys.dashboard })
+    },
+  })
+}
+
 export function useCampaignCheck(id: string | undefined, enabled = true) {
   return useQuery({
     queryKey: keys.check(id ?? ''),

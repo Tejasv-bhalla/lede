@@ -1,4 +1,4 @@
-import { Download, FileUp, Play, Plus, Settings2 } from 'lucide-react'
+import { Download, FileUp, Play, Plus, Settings2, Trash2 } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { toast } from 'sonner'
@@ -6,6 +6,7 @@ import { toast } from 'sonner'
 import {
   useAddProspect,
   useCampaign,
+  useDeleteCampaign,
   useImportCsv,
   useProspects,
   useRuns,
@@ -68,6 +69,7 @@ export function CampaignWorkspace() {
   const [tier, setTier] = useState<Tier>('standard')
   const [adding, setAdding] = useState(false)
   const [importing, setImporting] = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
   // Every approved run counts, not only each prospect's latest: the export includes them all.
   const runs = useRuns({ campaign_id: campaignId })
@@ -97,6 +99,14 @@ export function CampaignWorkspace() {
         description={campaign.data?.objective}
         actions={
           <>
+            <Button
+              variant="ghost"
+              aria-label="Delete campaign"
+              title="Delete campaign"
+              onClick={() => setDeleting(true)}
+            >
+              <Trash2 className="size-4" />
+            </Button>
             <Button variant="ghost" asChild>
               <Link to={`/setup?step=1&campaign=${campaignId}`}>
                 <Settings2 className="size-4" /> Edit
@@ -232,8 +242,73 @@ export function CampaignWorkspace() {
       )}
 
       <AddProspectDialog campaignId={campaignId} open={adding} onOpenChange={setAdding} />
+      <DeleteCampaignDialog
+        campaignId={campaignId}
+        name={campaign.data?.name ?? 'this campaign'}
+        prospects={prospects.data?.length ?? 0}
+        runs={runs.data?.length ?? 0}
+        approved={approved}
+        open={deleting}
+        onOpenChange={setDeleting}
+      />
       <ImportCsvDialog campaignId={campaignId} open={importing} onOpenChange={setImporting} />
     </div>
+  )
+}
+
+function DeleteCampaignDialog({
+  campaignId,
+  name,
+  prospects,
+  runs,
+  approved,
+  open,
+  onOpenChange,
+}: {
+  campaignId: string
+  name: string
+  prospects: number
+  runs: number
+  approved: number
+  open: boolean
+  onOpenChange: (open: boolean) => void
+}) {
+  const remove = useDeleteCampaign()
+  const navigate = useNavigate()
+  const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
+
+  async function confirm() {
+    try {
+      await remove.mutateAsync(campaignId)
+      toast.success(`Deleted ${name}`)
+      navigate('/campaigns')
+    } catch (err) {
+      toast.error('The campaign was not deleted', { description: (err as Error).message })
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Delete {name}?</DialogTitle>
+          <DialogDescription>
+            This deletes its {plural(prospects, 'prospect')} and {plural(runs, 'run')}, with their
+            research and drafts. It can't be undone.
+            {approved > 0 &&
+              ` ${plural(approved, 'approved draft')} will be lost too; download them first if you still need them.`}
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button variant="destructive" disabled={remove.isPending} onClick={confirm}>
+            {remove.isPending ? 'Deleting…' : 'Delete campaign'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
