@@ -28,6 +28,7 @@ from app.pipeline.ports import (
 )
 from app.policy.draft_rules import DraftRules, check_draft
 from app.policy.recency import Freshness, assess_recency
+from app.providers.llm_router import LLMUnavailable
 from app.research.loop import Budget, ResearchDeps, ResearchResult, run_research
 from app.research.ports import ResearchTarget
 
@@ -95,6 +96,15 @@ async def _score(
     }
 
 
+def _preflight(prospect: ProspectInput, brief: MergedBrief) -> list[str]:
+    """S1: cheap checks before any paid call. (Suppression and duplicates are checked by the
+    caller, which owns the run history.)"""
+    problems = [f"{i.message} {i.fix}" for i in brief.issues if i.severity == "error"]
+    if not prospect.company_name.strip():
+        problems.insert(0, "A company name is required.")
+    return problems
+
+
 def _rules_for(
     rules: DraftRules, hook: Evidence, ledger: list[Evidence], brief: MergedBrief, today: date
 ) -> DraftRules:
@@ -159,16 +169,41 @@ async def run_prospect(
     budget: Budget | None = None,
     pinned: Contact | None = None,
 ) -> RunOutcome:
-    """`pinned` is the contact the rep confirmed after a pause; identity is not resolved again."""
-    identity = (
+    """Run every stage and return the outcome; never raises for model outages.
+
+    `pinned` is the contact the rep confirmed after a pause; identity is not resolved again.
+    """
+    problems = _preflight(prospect, brief)
+    if problems:
+        return RunOutcome(RunState.INVALID_INPUT, problems=problems)
+    outcome = RunOutcome(RunState.RUNNING)
+    try:
+        await _stages(outcome, prospect, brief, deps, rules, today, budget or Budget(), pinned)
+    except LLMUnavailable as exc:
+        # Keep whatever the earlier stages produced, so a retry or the rep can build on it.
+        outcome.state = RunState.FAILED
+        outcome.problems.append(str(exc))
+    return outcome
+
+
+async def _stages(
+    outcome: RunOutcome,
+    prospect: ProspectInput,
+    brief: MergedBrief,
+    deps: PipelineDeps,
+    rules: DraftRules,
+    today: date,
+    budget: Budget,
+    pinned: Contact | None,
+) -> None:
+    identity = outcome.identity = (
         Identity(IdentityStatus.CONFIRMED, contact=pinned)
         if pinned
         else await deps.resolver.resolve(prospect)
     )
-    outcome = RunOutcome(RunState.RUNNING, identity=identity)
     if identity.status in _PAUSES:
         outcome.state = _PAUSES[identity.status]
-        return outcome
+        return
     contact = identity.contact
     if identity.status is IdentityStatus.NOT_FOUND:
         outcome.notes.append("person_not_found")
@@ -186,14 +221,14 @@ async def run_prospect(
         pains=tuple(brief.pains),
         priorities=tuple(c for c, p in brief.signal_priorities.items() if p is Priority.HIGH),
     )
-    outcome.research = await run_research(target, deps.research, budget or Budget())
+    outcome.research = await run_research(target, deps.research, budget)
     ledger = outcome.research.ledger = await _verify(outcome.research.ledger, deps.entailment)
 
     samples = await _score(ledger, deps.scorer, brief)
     outcome.ranking = rank_hooks(ledger, samples, weights=brief.hook_weights)
     if outcome.ranking.outcome != "ok":
         outcome.state = _NO_HOOK[outcome.ranking.outcome]
-        return outcome
+        return
 
     top = outcome.ranking.top()
     request = DraftRequest(
@@ -208,4 +243,3 @@ async def run_prospect(
     draft = await _best_draft(deps.writer, request)
     outcome.draft, outcome.problems = await _fact_check(draft, request, deps)
     outcome.state = RunState.DRAFT_HELD if outcome.problems else RunState.DRAFT_READY
-    return outcome

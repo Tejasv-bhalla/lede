@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import date
 
 import pytest
@@ -19,6 +20,7 @@ from app.domain.models import SignalCategory as Cat
 from app.pipeline.ports import Contact, Draft, Identity, IdentityStatus
 from app.pipeline.run import PipelineDeps, run_prospect
 from app.policy.draft_rules import DraftRules
+from app.providers.llm_router import LLMUnavailable
 from app.research.loop import ResearchDeps
 from app.research.ports import Candidate, Page, PlannedQuery, SearchHit
 from tests.fakes import (
@@ -372,3 +374,42 @@ async def test_research_is_aimed_by_the_campaign_objective_pains_and_priorities(
     assert target.pains == ("month-end close takes too long", "audit season is coming")
     assert target.priorities == (Cat.HIRING_PATTERN,)
     assert (target.person_name, target.title) == ("Priya Shah", "VP Finance")
+
+
+async def test_blank_company_is_rejected_before_any_work():
+    d = deps()
+    outcome = await run_prospect(
+        ProspectInput(company_name="  ", person_name="Priya Shah"),
+        BRIEF,
+        d,
+        rules=RULES,
+        today=TODAY,
+    )
+    assert outcome.state is RunState.INVALID_INPUT
+    assert d.resolver.calls == 0  # type: ignore[attr-defined]
+
+
+async def test_a_brief_with_unresolved_conflicts_is_rejected_before_any_work():
+    broken = merge_brief(
+        PROFILE, Campaign(id="c1", name="Q4", objective="Book demos", persona_id="nobody")
+    )
+    d = deps()
+    outcome = await run_prospect(PROSPECT, broken, d, rules=RULES, today=TODAY)
+
+    assert outcome.state is RunState.INVALID_INPUT
+    assert any("persona" in p for p in outcome.problems)
+    assert d.resolver.calls == 0  # type: ignore[attr-defined]
+
+
+class WriterWithNoModelsLeft(FakeWriter):
+    async def draft(self, request):
+        raise LLMUnavailable("All providers failed for role 'writer': rate limited")
+
+
+async def test_running_out_of_models_fails_the_run_but_keeps_the_research():
+    d = replace(deps(scores={PODCAST_QUOTE.claim: 4.5}), writer=WriterWithNoModelsLeft([]))
+    outcome = await run(d)
+
+    assert outcome.state is RunState.FAILED
+    assert outcome.research is not None and outcome.research.ledger
+    assert any("writer" in p for p in outcome.problems)
