@@ -23,16 +23,12 @@ services:
         sync: false
       - key: MISTRAL_API_KEY
         sync: false
-      - key: GITHUB_TOKEN
-        sync: false
       # Search and reading
       - key: TAVILY_API_KEY
         sync: false
       - key: EXA_API_KEY
         sync: false
       - key: JINA_API_KEY
-        sync: false
-      - key: SEC_CONTACT_EMAIL
         sync: false
       # Email finder
       - key: HUNTER_API_KEY
