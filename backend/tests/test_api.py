@@ -104,3 +104,87 @@ async def test_validating_before_a_profile_exists_says_what_to_do_first(client):
     r = await client.post(f"/api/campaigns/{cid}/validate", headers=AUTH)
     assert r.status_code == 409
     assert "profile" in r.json()["detail"].lower()
+
+
+async def new_campaign(client) -> str:
+    return (await client.post("/api/campaigns", json=CAMPAIGN, headers=AUTH)).json()["id"]
+
+
+async def test_a_prospect_is_added_to_a_campaign_and_listed(client):
+    cid = await new_campaign(client)
+    prospect = {"company_name": "Acme", "person_name": "Priya Shah", "title": "VP Finance"}
+    added = await client.post(f"/api/campaigns/{cid}/prospects", json=prospect, headers=AUTH)
+    assert added.status_code == 201
+
+    listed = (await client.get(f"/api/campaigns/{cid}/prospects", headers=AUTH)).json()
+    assert [(p["id"], p["person_name"]) for p in listed] == [(added.json()["id"], "Priya Shah")]
+
+
+CSV = (
+    "Full Name,Company,Website,Job Title,Favourite colour\n"
+    "Priya Shah,Acme,https://www.Acme.com/about,VP Finance,green\n"
+    "Sam Lee,,https://globex.example,CFO,blue\n"
+    "priya shah,ACME,acme.com,VP Finance,green\n"
+    ",Initech,initech.example,,red\n"
+)
+
+
+async def upload(client, cid: str, csv: str, *, dry_run: bool):
+    return await client.post(
+        f"/api/campaigns/{cid}/prospects/csv",
+        params={"dry_run": dry_run},
+        files={"file": ("prospects.csv", csv.encode(), "text/csv")},
+        headers=AUTH,
+    )
+
+
+async def test_csv_preview_maps_columns_normalises_and_reports_problems_without_saving(client):
+    cid = await new_campaign(client)
+    preview = (await upload(client, cid, CSV, dry_run=True)).json()
+
+    assert [
+        (r["person_name"], r["company_name"], r["company_domain"]) for r in preview["rows"]
+    ] == [
+        ("Priya Shah", "Acme", "acme.com"),
+        (None, "Initech", "initech.example"),  # company-only: the system will suggest a contact
+    ]
+    assert [(e["row"], e["reason"]) for e in preview["errors"]] == [
+        (3, "missing company name"),
+        (4, "duplicate of row 2"),
+    ]
+    assert preview["unmapped_columns"] == ["Favourite colour"]
+    assert (await client.get(f"/api/campaigns/{cid}/prospects", headers=AUTH)).json() == []
+
+
+async def test_csv_import_saves_valid_rows_and_skips_prospects_already_in_the_campaign(client):
+    cid = await new_campaign(client)
+    await client.post(
+        f"/api/campaigns/{cid}/prospects",
+        json={"company_name": "Initech", "company_domain": "initech.example"},
+        headers=AUTH,
+    )
+    result = (await upload(client, cid, CSV, dry_run=False)).json()
+
+    assert result["saved"] == 1
+    assert (5, "already in this campaign") in [(e["row"], e["reason"]) for e in result["errors"]]
+    names = [
+        p["company_name"]
+        for p in (await client.get(f"/api/campaigns/{cid}/prospects", headers=AUTH)).json()
+    ]
+    assert names == ["Initech", "Acme"]
+
+
+async def test_a_csv_without_a_company_column_is_rejected_with_the_columns_we_accept(client):
+    cid = await new_campaign(client)
+    r = await upload(client, cid, "Name,Email\nPriya,p@acme.com\n", dry_run=True)
+    assert r.status_code == 422
+    assert "company" in r.json()["detail"].lower()
+
+
+async def test_a_csv_over_the_row_limit_is_rejected_before_anything_is_saved(client):
+    cid = await new_campaign(client)
+    big = "Company\n" + "".join(f"Company {i}\n" for i in range(501))
+    r = await upload(client, cid, big, dry_run=False)
+    assert r.status_code == 422
+    assert "500" in r.json()["detail"]
+    assert (await client.get(f"/api/campaigns/{cid}/prospects", headers=AUTH)).json() == []

@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+import csv
 import hmac
 from dataclasses import asdict
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Request, UploadFile
 from pydantic import BaseModel
 
+from app.batch.csv_import import CsvFormatError, read_prospects
 from app.config import Settings
 from app.context.merge import merge_brief
 from app.db.store import Store
-from app.domain.models import Campaign, SellerProfile
+from app.domain.models import Campaign, ProspectInput, SellerProfile
+
+MAX_CSV_BYTES = 1_000_000
 
 
 class CodeCheck(BaseModel):
@@ -110,6 +114,46 @@ async def validate_campaign(campaign_id: str, store: StoreDep) -> dict[str, Any]
         "ok": brief.ok,
         "issues": [asdict(i) for i in brief.issues],
         "provenance": brief.provenance,
+    }
+
+
+@api.get("/campaigns/{campaign_id}/prospects")
+async def list_prospects(campaign_id: str, store: StoreDep) -> list[dict[str, Any]]:
+    await _campaign(store, campaign_id)
+    return [{"id": pid, **data} for pid, data in await store.list_prospects(campaign_id)]
+
+
+@api.post("/campaigns/{campaign_id}/prospects", status_code=201)
+async def add_prospect(
+    campaign_id: str, prospect: ProspectInput, store: StoreDep
+) -> dict[str, Any]:
+    await _campaign(store, campaign_id)
+    data = prospect.model_dump(mode="json")
+    (pid,) = await store.add_prospects(campaign_id, [data])
+    return {"id": pid, **data}
+
+
+@api.post("/campaigns/{campaign_id}/prospects/csv")
+async def import_prospects_csv(
+    campaign_id: str, file: UploadFile, store: StoreDep, dry_run: bool = True
+) -> dict[str, Any]:
+    """Preview (dry_run, the default) or save a prospect CSV; nothing costs quota here."""
+    await _campaign(store, campaign_id)
+    existing = [ProspectInput.model_validate(d) for _, d in await store.list_prospects(campaign_id)]
+    try:
+        text = (await file.read(MAX_CSV_BYTES + 1)).decode("utf-8-sig")
+        if len(text) > MAX_CSV_BYTES:
+            raise CsvFormatError("The file is larger than 1 MB.")
+        preview = read_prospects(text, existing)
+    except (CsvFormatError, UnicodeDecodeError, csv.Error) as exc:
+        raise HTTPException(422, str(exc)) from exc
+    rows = [p.model_dump(mode="json") for p in preview.rows]
+    saved = 0 if dry_run else len(await store.add_prospects(campaign_id, rows))
+    return {
+        "rows": rows,
+        "errors": [asdict(e) for e in preview.errors],
+        "unmapped_columns": preview.unmapped_columns,
+        "saved": saved,
     }
 
 

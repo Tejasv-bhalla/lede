@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import JSON, DateTime, Integer, String, select
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, select
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -48,6 +48,14 @@ class ProfileRow(Base):
 class CampaignRow(Base):
     __tablename__ = "campaigns"
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    data: Mapped[dict[str, Any]] = mapped_column(Json)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class ProspectRow(Base):
+    __tablename__ = "prospects"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    campaign_id: Mapped[str] = mapped_column(ForeignKey("campaigns.id"), index=True)
     data: Mapped[dict[str, Any]] = mapped_column(Json)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
@@ -108,3 +116,27 @@ class Store:
                 return False
             row.data = data
             return True
+
+    # ── prospects ─────────────────────────────────────────────────────────────
+
+    async def add_prospects(self, campaign_id: str, items: list[dict[str, Any]]) -> list[int]:
+        async with self.session() as s, s.begin():
+            rows = [ProspectRow(campaign_id=campaign_id, data=d) for d in items]
+            s.add_all(rows)
+            await s.flush()
+            return [r.id for r in rows]
+
+    async def list_prospects(self, campaign_id: str) -> list[tuple[int, dict[str, Any]]]:
+        async with self.session() as s:
+            rows = await s.scalars(
+                select(ProspectRow)
+                .where(ProspectRow.campaign_id == campaign_id)
+                .order_by(ProspectRow.id)
+            )
+            return [(r.id, r.data) for r in rows]
+
+    async def get_prospect(self, prospect_id: int) -> tuple[str, dict[str, Any]] | None:
+        """(campaign id, prospect data), or None."""
+        async with self.session() as s:
+            row = await s.get(ProspectRow, prospect_id)
+            return (row.campaign_id, row.data) if row else None
