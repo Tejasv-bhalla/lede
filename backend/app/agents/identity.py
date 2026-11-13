@@ -1,0 +1,172 @@
+"""Identity resolution (SYSTEM_DESIGN.md §4): is this the right person, still at this company?
+
+The model only proposes; code keeps the guardrails. Every person it names must be backed by a
+quote that really appears in the numbered search result it cites, and a "moved" verdict without
+such proof falls back to "confirmed" rather than stopping a run on a hunch.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from urllib.parse import urlsplit
+
+from app.agents.schemas import IdentityOut, PersonOut, SuggestionOut
+from app.context.merge import MergedBrief
+from app.domain.models import ProspectInput
+from app.domain.models import SignalCategory as Cat
+from app.pipeline.ports import Contact, Identity, IdentityStatus
+from app.policy.quotes import verify_quote
+from app.providers.llm_router import LLMRouter
+from app.research.ports import PlannedQuery, ResearchTarget, Searcher, SearchHit
+
+PROMPT_VERSION = "identity-v1"
+MAX_RESULTS = 12
+
+
+def _numbered(hits: list[SearchHit]) -> str:
+    return "\n".join(
+        f"[{i}] {h.title}\n    {h.url}\n    {h.snippet[:400]}" for i, h in enumerate(hits, 1)
+    )
+
+
+def _host(url: str) -> str:
+    return (urlsplit(url).hostname or "").removeprefix("www.")
+
+
+class SearchResolver:
+    def __init__(self, router: LLMRouter, searcher: Searcher) -> None:
+        self._router, self._searcher = router, searcher
+
+    async def _search(self, queries: list[str], target: ResearchTarget) -> list[SearchHit]:
+        results = await asyncio.gather(
+            *(self._searcher.search(PlannedQuery(Cat.ROLE_CHANGE, q), target) for q in queries),
+            return_exceptions=True,
+        )
+        hits: dict[str, SearchHit] = {}
+        for result in results:
+            if isinstance(result, BaseException):
+                continue
+            for h in result:
+                hits.setdefault(h.url, h)
+        return list(hits.values())[:MAX_RESULTS]
+
+    def _proven(self, person: PersonOut | None, hits: list[SearchHit]) -> Contact | None:
+        """A contact only if the cited result really contains the cited quote."""
+        if person is None or not 1 <= person.result <= len(hits):
+            return None
+        hit = hits[person.result - 1]
+        if not verify_quote(person.quote, f"{hit.title} {hit.snippet}").verified:
+            return None
+        return Contact(
+            company_name=person.company_name,
+            person_name=person.person_name,
+            title=person.title,
+            evidence_url=hit.url,
+            evidence_quote=person.quote,
+        )
+
+    def _domain(self, proposed: str | None, given: str | None, hits: list[SearchHit]) -> str | None:
+        if given:
+            return given
+        proposed = (proposed or "").removeprefix("www.").strip("/ ").casefold()
+        return proposed if proposed and any(_host(h.url) == proposed for h in hits) else None
+
+    async def resolve(self, prospect: ProspectInput, brief: MergedBrief) -> Identity:
+        target = ResearchTarget(
+            company_name=prospect.company_name,
+            company_domain=prospect.company_domain,
+            person_name=prospect.person_name,
+            title=prospect.title,
+            objective=brief.objective,
+        )
+        if prospect.person_name:
+            return await self._person(prospect, target)
+        return await self._suggest(prospect, target, brief)
+
+    async def _person(self, prospect: ProspectInput, target: ResearchTarget) -> Identity:
+        name, company = prospect.person_name, prospect.company_name
+        hits = await self._search(
+            [
+                f'"{name}" "{company}"',
+                f'"{name}" {prospect.title or ""} {company}'.replace("  ", " "),
+            ],
+            target,
+        )
+        if not hits:
+            return Identity(IdentityStatus.NOT_FOUND)
+        prompt = f"""Check a sales prospect's identity from web search results.
+
+Prospect as given by the salesperson: {name}, {prospect.title or "title unknown"}, at {company}
+{f"LinkedIn URL given (identifier only): {prospect.linkedin_url}" if prospect.linkedin_url else ""}
+
+Search results:
+{_numbered(hits)}
+
+Decide:
+- "confirmed": results show {name} works at {company} now. Put them in `match`.
+- "moved": a recent result clearly shows {name} now works at a DIFFERENT company. Put the new
+  role in `match` (company_name = the new company).
+- "ambiguous": several different people named {name} could fit and the results don't say which
+  one is at {company}. List up to 3 in `candidates`.
+- "not_found": nothing reliable about this person.
+For every person you name: `result` is the number of the result that shows it, and `quote` is
+copied EXACTLY from that result's title or text. Also give the company's own website domain
+(like "acme.com") if a result shows it."""
+        out = (await self._router.structured("judge", prompt, IdentityOut)).value
+        domain = self._domain(out.company_domain, prospect.company_domain, hits)
+        match = self._proven(out.match, hits)
+        if out.status == "ambiguous":
+            candidates = tuple(c for c in (self._proven(p, hits) for p in out.candidates) if c)
+            if len(candidates) > 1:
+                return Identity(IdentityStatus.AMBIGUOUS, candidates=candidates)
+        if out.status == "moved" and match and match.company_name != company:
+            return Identity(IdentityStatus.MOVED, contact=match)
+        if out.status == "not_found":
+            return Identity(IdentityStatus.NOT_FOUND)
+        return Identity(
+            IdentityStatus.CONFIRMED,
+            contact=Contact(
+                company_name=company,
+                company_domain=domain,
+                person_name=name,
+                title=prospect.title or (match.title if match else None),
+                evidence_url=match.evidence_url if match else None,
+                evidence_quote=match.evidence_quote if match else None,
+            ),
+        )
+
+    async def _suggest(
+        self, prospect: ProspectInput, target: ResearchTarget, brief: MergedBrief
+    ) -> Identity:
+        company = prospect.company_name
+        titles = (brief.persona.title_patterns if brief.persona else [])[:2] or ["Head of"]
+        hits = await self._search([f'"{company}" "{t}"' for t in titles], target)
+        if not hits:
+            return Identity(IdentityStatus.NOT_FOUND)
+        prompt = f"""A salesperson gave only a company: {company}. Find who at {company} matches the
+role they want to reach: {", ".join(titles)}.
+
+Search results:
+{_numbered(hits)}
+
+Suggest up to 3 people who CURRENTLY work at {company} in or near that role, best first. Only
+people the results actually show; never invent a name. For each: `result` is the number of the
+result that shows it, `quote` copied EXACTLY from that result's title or text. If nobody fits,
+return no suggestions. Also give {company}'s own website domain if a result shows it."""
+        out = (await self._router.structured("judge", prompt, SuggestionOut)).value
+        domain = self._domain(out.company_domain, prospect.company_domain, hits)
+        people = tuple(
+            Contact(
+                company_name=company,
+                company_domain=domain,
+                person_name=c.person_name,
+                title=c.title,
+                evidence_url=c.evidence_url,
+                evidence_quote=c.evidence_quote,
+            )
+            for c in (self._proven(p, hits) for p in out.suggestions)
+            if c
+        )
+        if not people:
+            return Identity(IdentityStatus.NOT_FOUND)
+        return Identity(IdentityStatus.SUGGESTED, candidates=people)
